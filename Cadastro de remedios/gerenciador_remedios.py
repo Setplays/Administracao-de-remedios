@@ -143,7 +143,7 @@ class App:
         # --- Frame de Cadastro ---
         cadastro_frame = ttk.LabelFrame(self.root, text="Cadastrar Novo Remédio", padding=(10, 10))
         cadastro_frame.pack(fill="x", padx=10, pady=10)
-        cadastro_frame.column_configure(1, weight=1)
+        cadastro_frame.columnconfigure(1, weight=1) # Correção: 'column_configure' -> 'columnconfigure'
 
         ttk.Label(cadastro_frame, text="Nome:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
         self.entry_nome = ttk.Entry(cadastro_frame, width=40)
