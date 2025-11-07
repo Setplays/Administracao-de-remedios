@@ -7,6 +7,12 @@ import threading
 import time
 import sys # Importado para ler argumentos de linha de comando
 
+# --- DEFINIÇÃO DE CAMINHO ABSOLUTO ---
+# Pega o caminho completo da pasta ONDE O SCRIPT ESTÁ.
+# __file__ é uma variável que contém o caminho deste script.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# -------------------------------------
+
 # Tenta importar a biblioteca de notificação
 try:
     from win10toast import ToastNotifier
@@ -30,8 +36,10 @@ class App:
         self.root.title("Gerenciador de Remédios")
         self.root.geometry("800x600")
         
-        # Define o nome do arquivo do banco de dados
-        self.db_name = "remedios.db"
+        # --- CAMINHO CORRIGIDO PARA O DB ---
+        # Junta o caminho da pasta do script com o nome do arquivo do DB
+        self.db_name = os.path.join(SCRIPT_DIR, "remedios.db")
+        # -----------------------------------
         
         # Conexão principal com o banco de dados (usada pela thread principal)
         self.db_conn = None
@@ -72,6 +80,7 @@ class App:
         """Inicializa a conexão com o banco de dados e cria as tabelas se não existirem."""
         
         # Se o arquivo não existir, o connect() o criará
+        # self.db_name agora é o caminho completo (ex: C:\Users\...\remedios.db)
         self.db_conn = sqlite3.connect(self.db_name)
         self.db_cursor = self.db_conn.cursor()
         
@@ -465,6 +474,7 @@ class App:
         conn_thread = None  # Conexão local da thread
         try:
             # 1. Cria uma conexão com o DB específica para esta thread
+            # self.db_name agora é o caminho completo
             conn_thread = sqlite3.connect(self.db_name)
             # 1b. Habilita chaves estrangeiras na thread
             conn_thread.execute("PRAGMA foreign_keys = ON;")
@@ -555,14 +565,15 @@ class App:
 if __name__ == "__main__":
     root = tk.Tk()
     
-    # --- ADICIONA O ÍCONE ---
+    # --- CAMINHO CORRIGIDO PARA O ÍCONE ---
     try:
-        # Garante que o ícone esteja na mesma pasta que o script
-        icon = tk.PhotoImage(file='cardiogram.png')
+        # Junta o caminho da pasta do script com o nome do ícone
+        icon_path = os.path.join(SCRIPT_DIR, 'cardiogram.png')
+        icon = tk.PhotoImage(file=icon_path)
         root.iconphoto(True, icon)
     except tk.TclError:
         # Caso o arquivo .png não seja encontrado
-        print("Arquivo 'cardiogram.png' não encontrado. Usando ícone padrão.")
+        print(f"Arquivo de ícone não encontrado em: {icon_path}. Usando ícone padrão.")
     except Exception as e:
         # Outros erros (ex: formato não suportado, permissão)
         print(f"Não foi possível carregar o ícone: {e}")
