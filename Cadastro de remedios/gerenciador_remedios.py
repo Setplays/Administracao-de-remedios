@@ -72,16 +72,11 @@ class App:
                 print("Desativando notificações.")
                 NOTIFIER_AVAILABLE = False
 
-        # _init_db() agora também executa a atualização automática de estoque
         self._init_db()
-        
         self._setup_ui()
         self.atualizar_lista_remedios()
 
-        # Inicia a thread de notificação (para estoque baixo)
         self.iniciar_verificador_notificacoes()
-        
-        # Inicia o loop de verificação diária (para débito automático)
         self.iniciar_loop_verificacao_diaria()
 
         self.tray_icon = None
@@ -97,13 +92,23 @@ class App:
         else:
             self.root.deiconify()
 
+    def _check_and_add_column(self, table_name, column_name, column_definition):
+        """Verifica se uma coluna existe e, se não, a adiciona."""
+        try:
+            self.db_cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [info[1] for info in self.db_cursor.fetchall()]
+            if column_name not in columns:
+                print(f"Adicionando coluna '{column_name}' à tabela '{table_name}'...")
+                self.db_cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+                self.db_conn.commit()
+                print(f"Coluna '{column_name}' adicionada com sucesso.")
+        except sqlite3.Error as e:
+            print(f"Erro ao tentar adicionar coluna '{column_name}': {e}")
+
     def _init_db(self):
-        """Inicializa a conexão com o banco de dados e cria as tabelas se não existirem."""
+        """Inicializa a conexão com o banco de dados e cria/atualiza as tabelas."""
         try:
             print(f"Usando banco de dados em: {self.db_name}")
-            # --- CORREÇÃO DE THREADING ---
-            # Remove 'check_same_thread=False'. A thread de notificação
-            # agora criará sua própria conexão.
             self.db_conn = sqlite3.connect(self.db_name)
             self.db_cursor = self.db_conn.cursor()
             
@@ -130,7 +135,7 @@ class App:
             )
             """)
             
-            # Tabela para rastrear a última execução e debitar o estoque
+            # Tabela para rastrear a última execução
             self.db_cursor.execute("""
             CREATE TABLE IF NOT EXISTS app_info (
                 id INTEGER PRIMARY KEY,
@@ -138,10 +143,11 @@ class App:
             )
             """)
             
+            # --- NOVO: Adiciona a coluna 'unidade' se ela não existir ---
+            self._check_and_add_column('remedios', 'unidade', 'TEXT NOT NULL DEFAULT "comprimido"')
+            
             self.db_conn.commit()
             
-            # Chama a função de atualização de estoque logo após conectar ao DB
-            # Esta função usa self.db_cursor, o que é seguro pois estamos na thread principal.
             self._atualizar_estoque_automatico()
 
         except sqlite3.Error as e:
@@ -149,17 +155,13 @@ class App:
             self.root.quit()
 
     def _atualizar_estoque_automatico(self, dias_passados=None):
-        """
-        Debita o estoque dos remédios com base nos dias que se passaram.
-        Esta função é segura para ser chamada pela thread principal (GUI).
-        """
+        """Debita o estoque dos remédios com base nos dias que se passaram."""
         try:
             hoje = date.today()
             hoje_str = hoje.strftime('%Y-%m-%d')
             dias_a_debitar = 0
             
             if dias_passados is None:
-                # Lógica de Startup: Verifica quantos dias se passaram desde o fechamento
                 self.db_cursor.execute("SELECT last_run_date FROM app_info WHERE id = 1")
                 resultado = self.db_cursor.fetchone()
                 
@@ -168,13 +170,11 @@ class App:
                     last_run_date = datetime.strptime(last_run_date_str, '%Y-%m-%d').date()
                     dias_a_debitar = (hoje - last_run_date).days
                 else:
-                    # Primeira execução
                     print("Primeira execução. Configurando data de verificação de estoque.")
                     self.db_cursor.execute("INSERT INTO app_info (id, last_run_date) VALUES (1, ?)", (hoje_str,))
                     self.db_conn.commit()
-                    return # Não há o que debitar
+                    return False
             else:
-                # Lógica de Runtime (Meia-noite): sabemos que passou N dias
                 dias_a_debitar = dias_passados
 
             
@@ -187,16 +187,14 @@ class App:
                     WHERE doses_por_dia > 0
                 """, (dias_a_debitar,))
                 
-                # Atualiza a data da última execução para hoje
                 self.db_cursor.execute("UPDATE app_info SET last_run_date = ? WHERE id = 1", (hoje_str,))
                 self.db_conn.commit()
                 print(f"Estoque debitado por {dias_a_debitar} dia(s).")
                 
-                # Retorna True para sabermos que a lista precisa ser atualizada
                 return True 
             else:
                 print("Verificação automática de estoque: Nenhum dia se passou.")
-                return False # Nada mudou
+                return False
 
         except sqlite3.Error as e:
             print(f"Erro ao atualizar estoque automático: {e}")
@@ -204,12 +202,8 @@ class App:
             return False
 
     def _verificar_mudanca_dia(self):
-        """
-        Chamado pelo loop 'root.after' para verificar se a data mudou (passou da meia-noite)
-        enquanto o app estava aberto. Roda na thread principal (GUI).
-        """
+        """Chamado pelo loop 'root.after' para verificar se a data mudou."""
         try:
-            # É seguro usar self.db_cursor pois esta função é chamada via self.root.after()
             self.db_cursor.execute("SELECT last_run_date FROM app_info WHERE id = 1")
             resultado = self.db_cursor.fetchone()
             
@@ -222,23 +216,19 @@ class App:
                 
                 if dias_passados > 0:
                     print(f"MEIA-NOITE DETECTADA! Passaram {dias_passados} dia(s).")
-                    # Chama a função de débito, que também usa self.db_cursor
                     if self._atualizar_estoque_automatico(dias_passados=dias_passados):
-                        self.atualizar_lista_remedios() # Atualiza a UI se o estoque mudou
+                        self.atualizar_lista_remedios()
         
         except sqlite3.Error as e:
             print(f"Erro no loop de verificação diária: {e}")
         except Exception as e:
             print(f"Erro inesperado no loop de verificação diária: {e}")
         finally:
-            # Reagenda a próxima verificação
             self.iniciar_loop_verificacao_diaria() # Re-agenda
 
     def iniciar_loop_verificacao_diaria(self):
         """Agenda a próxima verificação de mudança de dia."""
-        # Verifica a cada 10 minutos (600000 ms)
-        self.root.after(600000, self._verificar_mudanca_dia)
-        # print("Próxima verificação de mudança de dia em 10 minutos.") # Log opcional
+        self.root.after(600000, self._verificar_mudanca_dia) # A cada 10 minutos
 
 
     def _setup_ui(self):
@@ -249,11 +239,13 @@ class App:
         cadastro_frame.pack(fill="x", padx=10, pady=10)
         cadastro_frame.columnconfigure(1, weight=1)
 
+        # Linha 0: Nome
         ttk.Label(cadastro_frame, text="Nome:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
         self.entry_nome = ttk.Entry(cadastro_frame, width=40)
         self.entry_nome.grid(row=0, column=1, columnspan=3, padx=5, pady=5, sticky="we")
 
-        ttk.Label(cadastro_frame, text="Doses por Dia:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        # Linha 1: Doses e Estoque
+        ttk.Label(cadastro_frame, text="Dose Diária:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
         self.entry_doses_dia = ttk.Entry(cadastro_frame, width=10)
         self.entry_doses_dia.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
@@ -261,26 +253,37 @@ class App:
         self.entry_estoque = ttk.Entry(cadastro_frame, width=10)
         self.entry_estoque.grid(row=1, column=3, padx=5, pady=5, sticky="w")
         
+        # --- NOVO: Linha 2: Unidade ---
+        ttk.Label(cadastro_frame, text="Unidade:").grid(row=2, column=0, padx=5, pady=5, sticky="e")
+        unidade_frame = ttk.Frame(cadastro_frame)
+        unidade_frame.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky="w")
+        
+        self.unidade_var = tk.StringVar(value="comprimido")
+        ttk.Radiobutton(unidade_frame, text="Comprimido(s)", variable=self.unidade_var, value="comprimido").pack(side="left", padx=5)
+        ttk.Radiobutton(unidade_frame, text="ML", variable=self.unidade_var, value="ml").pack(side="left", padx=5)
+        
+        # Botão de Cadastrar
         self.btn_cadastrar = ttk.Button(cadastro_frame, text="Cadastrar", command=self.cadastrar_remedio)
-        self.btn_cadastrar.grid(row=0, column=4, rowspan=2, padx=10, pady=5, ipady=10)
+        self.btn_cadastrar.grid(row=0, column=4, rowspan=3, padx=10, pady=5, ipady=15) # rowspan=3 agora
 
 
         # --- Frame da Lista de Remédios ---
         lista_frame = ttk.LabelFrame(self.root, text="Meus Remédios", padding=(10, 10))
         lista_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        colunas = ("remedio", "doses_dia", "estoque", "dias_restantes", "data_fim")
+        # Colunas atualizadas
+        colunas = ("remedio", "dose", "estoque", "dias_restantes", "data_fim")
         self.tree = ttk.Treeview(lista_frame, columns=colunas, show="headings")
 
         self.tree.heading("remedio", text="Remédio")
-        self.tree.heading("doses_dia", text="Doses/Dia")
-        self.tree.heading("estoque", text="Estoque Atual")
+        self.tree.heading("dose", text="Dose Diária") # Texto atualizado
+        self.tree.heading("estoque", text="Estoque Atual") # Texto atualizado
         self.tree.heading("dias_restantes", text="Dias Restantes")
         self.tree.heading("data_fim", text="Data Prev. Fim")
 
         self.tree.column("remedio", width=250)
-        self.tree.column("doses_dia", width=80, anchor="center")
-        self.tree.column("estoque", width=100, anchor="center")
+        self.tree.column("dose", width=120, anchor="center")
+        self.tree.column("estoque", width=120, anchor="center")
         self.tree.column("dias_restantes", width=100, anchor="center")
         self.tree.column("data_fim", width=120, anchor="center")
 
@@ -330,18 +333,24 @@ class App:
             self.tree.delete(item)
 
         try:
-            remedios = self.db_cursor.execute("SELECT id, nome, doses_por_dia, estoque_atual FROM remedios").fetchall()
+            # --- NOVO: Puxa a 'unidade' do banco ---
+            remedios = self.db_cursor.execute("SELECT id, nome, doses_por_dia, estoque_atual, unidade FROM remedios").fetchall()
             for r in remedios:
-                remedio_id, nome, doses_dia, estoque = r
+                remedio_id, nome, doses_dia, estoque, unidade = r
                 dias_str, data_fim_str = self.calcular_previsao(estoque, doses_dia)
                 
-                self.tree.insert("", "end", iid=remedio_id, values=(nome, doses_dia, estoque, dias_str, data_fim_str))
+                # Formata a exibição da dose e estoque com a unidade
+                dose_display = f"{doses_dia} {unidade}"
+                estoque_display = f"{estoque} {unidade}"
+                
+                self.tree.insert("", "end", iid=remedio_id, values=(nome, dose_display, estoque_display, dias_str, data_fim_str))
         except sqlite3.Error as e:
             messagebox.showerror("Erro de Banco de Dados", f"Erro ao buscar remédios: {e}")
 
     def cadastrar_remedio(self):
         """Valida os campos e insere um novo remédio no banco."""
         nome = self.entry_nome.get().strip()
+        unidade = self.unidade_var.get() # --- NOVO ---
         try:
             doses_dia = int(self.entry_doses_dia.get())
             estoque = int(self.entry_estoque.get())
@@ -354,9 +363,10 @@ class App:
             return
 
         try:
+            # --- NOVO: Insere a 'unidade' no banco ---
             self.db_cursor.execute(
-                "INSERT INTO remedios (nome, doses_por_dia, estoque_atual) VALUES (?, ?, ?)",
-                (nome, doses_dia, estoque)
+                "INSERT INTO remedios (nome, doses_por_dia, estoque_atual, unidade) VALUES (?, ?, ?, ?)",
+                (nome, doses_dia, estoque, unidade)
             )
             remedio_id = self.db_cursor.lastrowid
 
@@ -372,6 +382,7 @@ class App:
             self.entry_nome.delete(0, "end")
             self.entry_doses_dia.delete(0, "end")
             self.entry_estoque.delete(0, "end")
+            self.unidade_var.set("comprimido") # Reseta a unidade
             
             self.atualizar_lista_remedios()
 
@@ -394,8 +405,23 @@ class App:
         if remedio_id is None:
             return
 
+        # --- NOVO: Busca a unidade para mostrar no pop-up ---
+        valores = self.tree.item(remedio_id, 'values')
+        nome_remedio = valores[0]
+        estoque_atual_str = valores[2] # Ex: "10 comprimido"
+        
         try:
-            quantidade_str = simpledialog.askstring("Adicionar Estoque", "Qual a quantidade que deseja ADICIONAR?")
+            # Parseia o valor do estoque e a unidade
+            estoque_val, unidade = estoque_atual_str.split()
+            estoque_val = int(estoque_val)
+        except Exception:
+            messagebox.showerror("Erro", "Não foi possível ler o estoque atual do remédio selecionado.")
+            return
+
+        try:
+            prompt = f"Remédio: {nome_remedio}\nEstoque Atual: {estoque_val} {unidade}\n\nQuanto deseja ADICIONAR ({unidade})?"
+            quantidade_str = simpledialog.askstring("Adicionar Estoque", prompt)
+            
             if quantidade_str is None: return
             
             quantidade = int(quantidade_str)
@@ -426,8 +452,18 @@ class App:
         if remedio_id is None:
             return
 
+        # --- NOVO: Busca a unidade para mostrar no pop-up ---
+        valores = self.tree.item(remedio_id, 'values')
+        estoque_atual_str = valores[2] # Ex: "10 comprimido"
         try:
-            quantidade_str = simpledialog.askstring("Modificar Estoque", "Qual o NOVO valor TOTAL do estoque?")
+            _, unidade = estoque_atual_str.split()
+        except Exception:
+            unidade = "" # Fallback
+
+        try:
+            prompt = f"Qual o NOVO valor TOTAL do estoque ({unidade})?"
+            quantidade_str = simpledialog.askstring("Modificar Estoque", prompt)
+            
             if quantidade_str is None: return
             
             quantidade = int(quantidade_str)
@@ -472,37 +508,34 @@ class App:
     # --- Lógica de Notificação e Threads ---
 
     def _verificar_estoque_notificacao(self):
-        """
-        Verifica o estoque e agenda notificações na thread principal.
-        CORREÇÃO DE THREADING: Esta função agora cria sua própria conexão DB.
-        """
+        """Verifica o estoque e agenda notificações na thread principal."""
         if not NOTIFIER_AVAILABLE:
             return
 
         print("Executando verificação de estoque (Notificação)...")
         
-        # --- CORREÇÃO DE THREADING (SQLITE) ---
-        # A thread de fundo DEVE criar sua própria conexão.
         conn_thread = None
         try:
-            # 1. Cria uma conexão SÓ para esta thread
             conn_thread = sqlite3.connect(self.db_name)
             cursor_thread = conn_thread.cursor()
             
-            # 2. Usa o novo cursor_thread para a consulta
-            remedios = cursor_thread.execute("SELECT nome, doses_por_dia, estoque_atual FROM remedios").fetchall()
+            # --- NOVO: Puxa a 'unidade' do banco ---
+            remedios = cursor_thread.execute("SELECT nome, doses_por_dia, estoque_atual, unidade FROM remedios").fetchall()
             
             LIMITE_DIAS = 5
             
-            for nome, doses_dia, estoque in remedios:
-                if doses_dia > 0 and estoque > 0: # Só notifica se tiver estoque
+            for nome, doses_dia, estoque, unidade in remedios:
+                if doses_dia > 0 and estoque > 0:
                     dias_restantes = int(estoque // doses_dia)
                     if dias_restantes <= LIMITE_DIAS:
                         print(f"Estoque baixo detectado para: {nome}")
-                        titulo = "Alerta de Estoque Baixo!"
-                        mensagem = f"O remédio '{nome}' está acabando. Restam apenas {estoque} unidades ({dias_restantes} dias)."
                         
-                        # Agenda a notificação para rodar na thread principal (GUI)
+                        # Pluraliza "comprimido" se necessário
+                        unidade_str = "comprimidos" if unidade == "comprimido" and estoque != 1 else unidade
+                        
+                        titulo = "Alerta de Estoque Baixo!"
+                        mensagem = f"O remédio '{nome}' está acabando. Restam apenas {estoque} {unidade_str} ({dias_restantes} dias)."
+                        
                         self.root.after(0, self.agendar_notificacao_main_thread, titulo, mensagem)
                         
             print("Verificação de notificações concluída.")
@@ -512,7 +545,6 @@ class App:
         except Exception as e:
             print(f"Erro inesperado na thread de notificação: {e}")
         finally:
-            # 3. Fecha a conexão da thread
             if conn_thread:
                 conn_thread.close()
 
@@ -522,7 +554,7 @@ class App:
         
         while True:
             self._verificar_estoque_notificacao()
-            time.sleep(4 * 3600) # Espera 4 horas
+            time.sleep(4 * 3600)
 
     def iniciar_verificador_notificacoes(self):
         """Inicia a thread de notificação em segundo plano."""
@@ -536,10 +568,7 @@ class App:
         print("Thread de notificação iniciada.")
 
     def agendar_notificacao_main_thread(self, titulo, mensagem):
-        """
-        Função segura para ser chamada pela thread de fundo.
-        Ela executa o 'show_toast' na thread principal.
-        """
+        """Função segura para ser chamada pela thread de fundo."""
         if not (NOTIFIER_AVAILABLE and self.toaster):
             return
 
@@ -577,11 +606,6 @@ class App:
             image_path = resource_path("cardiogram.png")
             image = Image.open(image_path)
             
-            # --- CORREÇÃO DE THREADING (PYSTRAY) ---
-            # O menu do pystray roda em sua própria thread.
-            # Não podemos chamar self.sair_app diretamente dele.
-            # Criamos funções "intermediárias" (on_menu_*)
-            
             menu = Menu(
                 MenuItem('Abrir Gerenciador', self.on_menu_mostrar, default=True),
                 MenuItem('Sair', self.on_menu_sair)
@@ -597,60 +621,36 @@ class App:
             TRAY_AVAILABLE = False
             self.root.protocol("WM_DELETE_WINDOW", self.sair_app)
 
-    # --- NOVAS FUNÇÕES (Correção Pystray) ---
     def on_menu_mostrar(self):
-        """
-        Chamado pela thread do pystray.
-        Agenda 'mostrar_janela' para rodar na thread principal (GUI).
-        """
+        """Chamado pela thread do pystray para agendar 'mostrar_janela'."""
         self.root.after(0, self.mostrar_janela)
 
     def on_menu_sair(self):
-        """
-        Chamado pela thread do pystray.
-        Agenda 'sair_app' para rodar na thread principal (GUI).
-        """
+        """Chamado pela thread do pystray para agendar 'sair_app'."""
         self.root.after(0, self.sair_app)
-    # --- Fim das Novas Funções ---
 
     def esconder_janela(self):
         """Esconde a janela principal (minimiza para a bandeja)."""
-        
-        # A janela é escondida IMEDIATAMENTE.
-        self.root.withdraw() # Esconde a janela
-        
-        # O código de notificação de "esconder" foi removido
-        # pois estava causando atrasos e ícones "fantasma".
+        self.root.withdraw()
 
     def mostrar_janela(self):
-        """
-        Mostra a janela.
-        Agora é garantido que esta função roda na thread principal.
-        """
+        """Mostra a janela."""
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
 
     def sair_app(self):
-        """
-        Fecha o aplicativo completamente.
-        Agora é garantido que esta função roda na thread principal.
-        """
+        """Fecha o aplicativo completamente (de forma segura)."""
         print("Fechando aplicativo...")
         
-        # 1. Para o ícone da bandeja PRIMEIRO.
         if self.tray_icon and TRAY_AVAILABLE:
             self.tray_icon.stop()
             print("Ícone da bandeja parado.")
         
-        # 2. Fecha a conexão com o banco de dados.
         if self.db_conn:
             self.db_conn.close()
             print("Conexão DB fechada.")
             
-        # 3. Agenda a destruição da janela principal para daqui a 100ms.
-        # Isso dá tempo para a thread do ícone da bandeja (pystray)
-        # se encerrar de forma limpa, evitando o erro WNDPROC.
         print("Agendando destruição da janela em 100ms...")
         self.root.after(100, self.root.destroy)
 
@@ -658,10 +658,8 @@ class App:
 if __name__ == "__main__":
     root = tk.Tk()
     
-    # CORREÇÃO: Carregar ícone usando PIL/ImageTk (mais robusto)
-    icon_image = None # Garante que a referência seja mantida
+    icon_image = None
     try:
-        # Tenta carregar o .png (preferido)
         png_path = resource_path("cardiogram.png")
         pil_image = Image.open(png_path)
         icon_image = ImageTk.PhotoImage(pil_image)
@@ -669,7 +667,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Não foi possível carregar o ícone .png da janela: {e}")
         try:
-            # Tenta carregar o .ico como fallback
             icon_path = resource_path("cardiogram.ico")
             root.iconbitmap(icon_path)
         except Exception as e2:
