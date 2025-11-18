@@ -48,6 +48,35 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+def is_val_too_big(valores: tuple):
+    """Essa função verifica se o valor é convertível para C INT"""
+    MAX_VALUE = 10_000_000  # limite para evitar overflow
+
+    print(valores)
+    
+    for val in valores:
+        if val > MAX_VALUE:
+            messagebox.showerror(
+            "Valor inválido",
+            f"Os valores são muito altos. Máximo permitido: {MAX_VALUE}"
+            )
+            
+            return True
+
+    return False
+
+def is_str_too_big(word):
+    MAX_VALUE = 30
+    if len(word) >= MAX_VALUE:
+        messagebox.showerror(
+        "Nome inválido",
+        f"A palavra utilizada é muito grande. O Máximo permitido são {MAX_VALUE} caracteres."
+        )
+        
+        return True
+        
+    return False
+
 class App:
     """Classe principal do aplicativo Gerenciador de Remédios."""
 
@@ -230,7 +259,6 @@ class App:
         """Agenda a próxima verificação de mudança de dia."""
         self.root.after(600000, self._verificar_mudanca_dia) # A cada 10 minutos
 
-
     def _setup_ui(self):
         """Cria e organiza os widgets da interface gráfica."""
         
@@ -362,6 +390,12 @@ class App:
             messagebox.showerror("Erro de Entrada", "Todos os campos são obrigatórios. Doses/dia deve ser > 0 e estoque >= 0.")
             return
 
+        if is_str_too_big(nome):
+            return
+        
+        if is_val_too_big((estoque, doses_dia)):
+            return
+
         try:
             # --- NOVO: Insere a 'unidade' no banco ---
             self.db_cursor.execute(
@@ -433,6 +467,9 @@ class App:
             return
 
         try:
+            if is_val_too_big((quantidade, )):
+                return
+            
             self.db_cursor.execute(
                 "UPDATE remedios SET estoque_atual = estoque_atual + ? WHERE id = ?",
                 (quantidade, remedio_id)
@@ -473,8 +510,13 @@ class App:
         except (ValueError, TypeError):
             messagebox.showerror("Erro", "Valor inválido.")
             return
-
+        
+        
         try:
+            
+            if is_val_too_big((quantidade, )):
+                return
+            
             self.db_cursor.execute(
                 "UPDATE remedios SET estoque_atual = ? WHERE id = ?",
                 (quantidade, remedio_id)
