@@ -67,7 +67,7 @@ def is_val_too_big(valores: tuple):
 
 def is_str_too_big(word):
     MAX_VALUE = 30
-    if len(word) >= MAX_VALUE:
+    if len(word) > MAX_VALUE:
         messagebox.showerror(
         "Nome inválido",
         f"A palavra utilizada é muito grande. O Máximo permitido são {MAX_VALUE} caracteres."
