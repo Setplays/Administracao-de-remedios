@@ -24,6 +24,17 @@ except ImportError:
 
 DB_PATH = os.path.join(os.path.expanduser("~"), "pharmastock.db")
 
+# Cores do Tema
+COR_FUNDO = "#f4f6f7"        # Cinza muito claro (fundo janelas)
+COR_BARRA_SUP = "#2c3e50"    # Azul Petróleo Escuro (cabeçalho)
+COR_DESTAQUE = "#3498db"     # Azul Claro (botões primários)
+COR_TEXTO = "#34495e"        # Cinza Escuro (texto)
+COR_VERMELHO = "#e74c3c"     # Vermelho (alertas)
+COR_VERDE = "#27ae60"        # Verde (sucesso)
+FONTE_PADRAO = ("Segoe UI", 10)
+FONTE_TITULO = ("Segoe UI", 12, "bold")
+FONTE_CABECALHO = ("Segoe UI", 18, "bold")
+
 def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
@@ -57,8 +68,9 @@ class App:
         
         global NOTIFIER_AVAILABLE
         
-        self.root.title("PharmaStock - Gerenciamento Completo")
+        self.root.title("PharmaStock") # Nome ajustado
         self.root.geometry("1100x750")
+        self.root.configure(bg=COR_FUNDO)
 
         if NOTIFIER_AVAILABLE:
             try:
@@ -67,6 +79,7 @@ class App:
                 NOTIFIER_AVAILABLE = False
 
         self._init_db()
+        self._configurar_estilo() # Aplica o tema bonito
         self._setup_ui()
         
         self.atualizar_combo_pacientes_cadastro()
@@ -85,6 +98,79 @@ class App:
             
         if "--minimized" in sys.argv and TRAY_AVAILABLE:
             self.esconder_janela()
+
+    def _configurar_estilo(self):
+        """Configura um tema moderno e plano (Flat Design)"""
+        style = ttk.Style()
+        style.theme_use('clam') # 'Clam' permite maior customização de cores
+
+        # Configuração Geral
+        style.configure(".", background=COR_FUNDO, foreground=COR_TEXTO, font=FONTE_PADRAO)
+        
+        # Frames
+        style.configure("TFrame", background=COR_FUNDO)
+        style.configure("Card.TFrame", background="#ffffff", relief="flat") # Efeito de cartão branco
+
+        # Labels
+        style.configure("TLabel", background=COR_FUNDO, foreground=COR_TEXTO)
+        style.configure("Title.TLabel", font=FONTE_TITULO, background=COR_FUNDO, foreground=COR_BARRA_SUP)
+        style.configure("Header.TLabel", font=FONTE_CABECALHO, background=COR_BARRA_SUP, foreground="#ffffff")
+        style.configure("White.TLabel", background="#ffffff") # Para usar dentro dos cards
+
+        # Botões (Primary)
+        style.configure("TButton", 
+                        font=("Segoe UI", 9, "bold"), 
+                        padding=10, 
+                        borderwidth=0, 
+                        background="#bdc3c7", # Cinza padrão
+                        foreground="#2c3e50")
+        
+        style.map("TButton", 
+                  background=[('active', '#95a5a6')], 
+                  foreground=[('active', '#000000')])
+
+        # Botão de Destaque (Azul)
+        style.configure("Accent.TButton", 
+                        background=COR_DESTAQUE, 
+                        foreground="#ffffff")
+        style.map("Accent.TButton", 
+                  background=[('active', '#2980b9')],
+                  foreground=[('active', '#ffffff')])
+
+        # Botão de Perigo (Vermelho)
+        style.configure("Danger.TButton", 
+                        background=COR_VERMELHO, 
+                        foreground="#ffffff")
+        style.map("Danger.TButton", 
+                  background=[('active', '#c0392b')])
+
+        # Inputs (Entry)
+        style.configure("TEntry", padding=5, relief="flat", borderwidth=1)
+        
+        # Notebook (Abas)
+        style.configure("TNotebook", background=COR_FUNDO, borderwidth=0)
+        style.configure("TNotebook.Tab", padding=[15, 10], font=("Segoe UI", 10, "bold"))
+        style.map("TNotebook.Tab", 
+                  background=[("selected", "#ffffff"), ("!selected", "#e0e0e0")],
+                  foreground=[("selected", COR_DESTAQUE), ("!selected", "#7f8c8d")])
+
+        # Treeview (Lista)
+        style.configure("Treeview", 
+                        background="#ffffff", 
+                        fieldbackground="#ffffff", 
+                        foreground=COR_TEXTO, 
+                        rowheight=30, 
+                        borderwidth=0,
+                        font=("Segoe UI", 10))
+        
+        style.configure("Treeview.Heading", 
+                        background="#ecf0f1", 
+                        foreground=COR_TEXTO, 
+                        font=("Segoe UI", 9, "bold"),
+                        padding=10)
+        
+        # Remove bordas feias do header
+        style.layout("Treeview", [('Treeview.treearea', {'sticky': 'nswe'})]) 
 
     def _init_db(self):
         try:
@@ -181,89 +267,54 @@ class App:
         self.root.after(600000, self._verificar_mudanca_dia)
 
     def _setup_ui(self):
-        style = ttk.Style()
-        style.configure("Treeview", rowheight=25)
-        style.configure("Bold.TLabel", font=('Segoe UI', 9, 'bold'))
+        # --- Cabeçalho Azul ---
+        header_frame = tk.Frame(self.root, bg=COR_BARRA_SUP, height=60)
+        header_frame.pack(fill="x", side="top")
+        header_frame.pack_propagate(False) # Impede que o frame encolha
 
-        # --- Frame de Cadastro (Topo) ---
-        cadastro_frame = ttk.LabelFrame(self.root, text="Cadastrar Novo Medicamento", padding=(10, 10))
-        cadastro_frame.pack(fill="x", padx=10, pady=5)
+        lbl_logo = ttk.Label(header_frame, text=" 💊 PharmaStock", style="Header.TLabel") # Nome ajustado
+        lbl_logo.pack(side="left", padx=20, pady=10)
 
-        # Seleção de Paciente
-        ttk.Label(cadastro_frame, text="Paciente:").grid(row=0, column=0, padx=5, sticky="e")
-        self.combo_paciente_cadastro = ttk.Combobox(cadastro_frame, state="readonly", width=25)
-        self.combo_paciente_cadastro.grid(row=0, column=1, padx=5, sticky="w")
-        
-        btn_novo_pac = ttk.Button(cadastro_frame, text="+ Novo", width=8, command=self.adicionar_paciente_dialog)
-        btn_novo_pac.grid(row=0, column=2, padx=2, sticky="w")
+        # --- Área Principal com Abas ---
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # Dados do Remédio
-        ttk.Label(cadastro_frame, text="Nome do Medicamento:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
-        self.entry_nome = ttk.Entry(cadastro_frame, width=40)
-        self.entry_nome.grid(row=1, column=1, columnspan=2, padx=5, sticky="we")
+        # Aba 1: Visão Geral (Lista)
+        self.tab_dashboard = ttk.Frame(notebook)
+        notebook.add(self.tab_dashboard, text="  📊 Visão Geral  ")
 
-        ttk.Label(cadastro_frame, text="Dose Diária:").grid(row=2, column=0, padx=5, sticky="e")
-        self.entry_doses = ttk.Entry(cadastro_frame, width=10)
-        self.entry_doses.grid(row=2, column=1, padx=5, sticky="w")
-        
-        ttk.Label(cadastro_frame, text="Estoque Inicial:").grid(row=2, column=1, padx=(120, 5), sticky="w")
-        self.entry_estoque = ttk.Entry(cadastro_frame, width=10)
-        self.entry_estoque.grid(row=2, column=1, padx=(210, 5), sticky="w")
+        # Aba 2: Cadastro
+        self.tab_cadastro = ttk.Frame(notebook)
+        notebook.add(self.tab_cadastro, text="  ➕ Novo Cadastro  ")
 
-        # Unidade
-        ttk.Label(cadastro_frame, text="Tipo de Unidade:").grid(row=3, column=0, padx=5, sticky="e")
-        unidade_frame = ttk.Frame(cadastro_frame)
-        unidade_frame.grid(row=3, column=1, columnspan=3, sticky="w")
-        self.unidade_var = tk.StringVar(value="comprimido")
-        ttk.Radiobutton(unidade_frame, text="Comprimido", variable=self.unidade_var, value="comprimido").pack(side="left")
-        ttk.Radiobutton(unidade_frame, text="ML", variable=self.unidade_var, value="ml").pack(side="left", padx=10)
-        ttk.Radiobutton(unidade_frame, text="Unidade Genérica", variable=self.unidade_var, value="unidade").pack(side="left", padx=10)
+        self._setup_tab_dashboard()
+        self._setup_tab_cadastro()
 
-        # Dias da Semana - CORREÇÃO: DIVIDIDO EM 2 LINHAS
-        lbl_dias = ttk.Label(cadastro_frame, text="Dias de Uso:")
-        lbl_dias.grid(row=4, column=0, padx=5, pady=5, sticky="ne")
-        dias_frame = ttk.Frame(cadastro_frame)
-        dias_frame.grid(row=4, column=1, columnspan=4, sticky="w")
-        
-        self.vars_dias = []
-        dias_nomes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
-        
-        for i, nome in enumerate(dias_nomes):
-            var = tk.BooleanVar(value=True)
-            chk = ttk.Checkbutton(dias_frame, text=nome, variable=var)
-            
-            # Divide: Primeiros 4 na linha 0, Restantes 3 na linha 1
-            if i < 4:
-                chk.grid(row=0, column=i, padx=5, sticky="w")
-            else:
-                chk.grid(row=1, column=i-4, padx=5, sticky="w")
-                
-            self.vars_dias.append(var)
+    def _setup_tab_dashboard(self):
+        """Conteúdo da aba Visão Geral"""
+        # Barra de Filtros e Ações Rápidas
+        top_bar = ttk.Frame(self.tab_dashboard)
+        top_bar.pack(fill="x", pady=15)
 
-        self.btn_cadastrar = ttk.Button(cadastro_frame, text="CADASTRAR MEDICAMENTO", command=self.cadastrar_remedio)
-        self.btn_cadastrar.grid(row=0, column=4, rowspan=5, padx=20, sticky="ns")
-
-        # --- Frame de Visualização (Centro) ---
-        visualizacao_frame = ttk.LabelFrame(self.root, text="Controle de Estoque e Previsão", padding=(10, 10))
-        visualizacao_frame.pack(fill="both", expand=True, padx=10, pady=5)
-
-        # Filtro
-        filtro_frame = ttk.Frame(visualizacao_frame)
-        filtro_frame.pack(fill="x", pady=(0, 10))
-        
-        ttk.Label(filtro_frame, text="Filtrar visualização por Paciente:", style="Bold.TLabel").pack(side="left", padx=5)
-        self.combo_filtro = ttk.Combobox(filtro_frame, state="readonly", width=30)
-        self.combo_filtro.pack(side="left", padx=5)
+        ttk.Label(top_bar, text="Filtrar por Paciente:", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 10))
+        self.combo_filtro = ttk.Combobox(top_bar, state="readonly", width=25)
+        self.combo_filtro.pack(side="left")
         self.combo_filtro.bind("<<ComboboxSelected>>", self.evento_filtro_mudou)
 
-        # Treeview
+        ttk.Button(top_bar, text="🔄 Atualizar", command=self.atualizar_lista_remedios).pack(side="right")
+        ttk.Button(top_bar, text="🔔 Testar Alerta", command=self.testar_notificacao_agora).pack(side="right", padx=10)
+
+        # Lista (Treeview) dentro de um Frame para borda
+        list_container = ttk.Frame(self.tab_dashboard)
+        list_container.pack(fill="both", expand=True)
+
         colunas = ("remedio", "dose", "estoque", "dias_rest", "previsao")
-        self.tree = ttk.Treeview(visualizacao_frame, columns=colunas, show="headings")
+        self.tree = ttk.Treeview(list_container, columns=colunas, show="headings", selectmode="browse")
         
-        self.tree.heading("remedio", text="Nome do Medicamento")
+        self.tree.heading("remedio", text="Medicamento")
         self.tree.heading("dose", text="Dose Diária")
         self.tree.heading("estoque", text="Estoque Atual")
-        self.tree.heading("dias_rest", text="Dias Restantes")
+        self.tree.heading("dias_rest", text="Duração (Dias)")
         self.tree.heading("previsao", text="Previsão de Término")
 
         self.tree.column("remedio", width=300)
@@ -272,26 +323,103 @@ class App:
         self.tree.column("dias_rest", width=120, anchor="center")
         self.tree.column("previsao", width=150, anchor="center")
 
-        self.tree.tag_configure('critico', foreground='red') 
+        # Tags de cores para linhas
+        self.tree.tag_configure('critico', foreground=COR_VERMELHO, background="#fadbd8") 
+        self.tree.tag_configure('zebra', background="#f7f9f9") # Cor alternada clara
 
-        scrollbar = ttk.Scrollbar(visualizacao_frame, orient="vertical", command=self.tree.yview)
+        scrollbar = ttk.Scrollbar(list_container, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscroll=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.tree.pack(fill="both", expand=True)
 
-        # --- Frame de Ações (Baixo) ---
-        acoes_frame = ttk.Frame(self.root)
-        acoes_frame.pack(fill="x", padx=10, pady=10)
-        
-        ttk.Button(acoes_frame, text="Adicionar Estoque", command=self.adicionar_estoque).pack(side="left", padx=5)
-        ttk.Button(acoes_frame, text="Corrigir Estoque Manualmente", command=self.modificar_estoque).pack(side="left", padx=5)
-        ttk.Button(acoes_frame, text="Remover Medicamento", command=self.remover_remedio).pack(side="left", padx=5)
-        
-        ttk.Button(acoes_frame, text="Ver Detalhes Completos", command=self.ver_detalhes).pack(side="left", padx=20)
-        
-        ttk.Button(acoes_frame, text="Testar Alerta de Estoque", command=self.testar_notificacao_agora).pack(side="right", padx=5)
+        # Botões de Ação Inferior
+        bottom_bar = ttk.Frame(self.tab_dashboard)
+        bottom_bar.pack(fill="x", pady=20)
 
-    # --- Lógica de Pacientes e Filtros ---
+        ttk.Button(bottom_bar, text="➕ Adicionar Estoque", style="Accent.TButton", command=self.adicionar_estoque).pack(side="left", padx=(0, 10))
+        ttk.Button(bottom_bar, text="✏️ Corrigir Manualmente", command=self.modificar_estoque).pack(side="left", padx=10)
+        ttk.Button(bottom_bar, text="📋 Ver Detalhes", command=self.ver_detalhes).pack(side="left", padx=10)
+        
+        ttk.Button(bottom_bar, text="🗑️ Remover", style="Danger.TButton", command=self.remover_remedio).pack(side="right")
+
+    def _setup_tab_cadastro(self):
+        """Conteúdo da aba Cadastro (Card branco centralizado)"""
+        center_frame = ttk.Frame(self.tab_cadastro)
+        center_frame.pack(expand=True)
+
+        # Card branco
+        card = ttk.LabelFrame(center_frame, text=" Preencha os dados ", padding=30, style="Card.TFrame")
+        card.pack(fill="both", padx=20, pady=20)
+
+        # --- Linha 1: Paciente ---
+        ttk.Label(card, text="Paciente:", style="White.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 5))
+        
+        frame_pac = ttk.Frame(card, style="Card.TFrame")
+        frame_pac.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 20))
+        
+        self.combo_paciente_cadastro = ttk.Combobox(frame_pac, state="readonly", width=35, font=("Segoe UI", 11))
+        self.combo_paciente_cadastro.pack(side="left", fill="x", expand=True)
+        
+        ttk.Button(frame_pac, text="+", width=4, command=self.adicionar_paciente_dialog).pack(side="left", padx=(10, 0))
+
+        # --- Linha 2: Nome do Medicamento ---
+        ttk.Label(card, text="Nome do Medicamento:", style="White.TLabel").grid(row=2, column=0, sticky="w", pady=(0, 5))
+        self.entry_nome = ttk.Entry(card, width=40, font=("Segoe UI", 11))
+        self.entry_nome.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 20))
+
+        # --- Linha 3: Dose e Estoque (Lado a Lado) ---
+        frame_nums = ttk.Frame(card, style="Card.TFrame")
+        frame_nums.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 20))
+
+        # Coluna Dose
+        col_dose = ttk.Frame(frame_nums, style="Card.TFrame")
+        col_dose.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ttk.Label(col_dose, text="Dose Diária:", style="White.TLabel").pack(anchor="w")
+        self.entry_doses = ttk.Entry(col_dose, font=("Segoe UI", 11))
+        self.entry_doses.pack(fill="x")
+
+        # Coluna Estoque
+        col_est = ttk.Frame(frame_nums, style="Card.TFrame")
+        col_est.pack(side="left", fill="x", expand=True, padx=(10, 0))
+        ttk.Label(col_est, text="Estoque Inicial:", style="White.TLabel").pack(anchor="w")
+        self.entry_estoque = ttk.Entry(col_est, font=("Segoe UI", 11))
+        self.entry_estoque.pack(fill="x")
+
+        # --- Linha 4: Unidade ---
+        ttk.Label(card, text="Tipo de Unidade:", style="White.TLabel").grid(row=6, column=0, sticky="w", pady=(0, 5))
+        frame_radio = ttk.Frame(card, style="Card.TFrame")
+        frame_radio.grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 20))
+        
+        self.unidade_var = tk.StringVar(value="comprimido")
+        # Estilo customizado para radiobutton requer imagens ou hacks complexos no ttk, 
+        # então vamos usar o padrão mas com fundo branco
+        ttk.Radiobutton(frame_radio, text="Comprimido", variable=self.unidade_var, value="comprimido").pack(side="left", padx=(0, 15))
+        ttk.Radiobutton(frame_radio, text="ML", variable=self.unidade_var, value="ml").pack(side="left", padx=15)
+        ttk.Radiobutton(frame_radio, text="Unidade Genérica", variable=self.unidade_var, value="unidade").pack(side="left", padx=15)
+
+        # --- Linha 5: Dias da Semana ---
+        ttk.Label(card, text="Dias de Uso:", style="White.TLabel").grid(row=8, column=0, sticky="w", pady=(0, 5))
+        
+        dias_frame = ttk.Frame(card, style="Card.TFrame")
+        dias_frame.grid(row=9, column=0, columnspan=2, sticky="w", pady=(0, 30))
+
+        self.vars_dias = []
+        dias_nomes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+        
+        # Grid para os checkboxes ficarem alinhados
+        for i, nome in enumerate(dias_nomes):
+            var = tk.BooleanVar(value=True)
+            chk = tk.Checkbutton(dias_frame, text=nome, variable=var, bg="#ffffff", activebackground="#ffffff", selectcolor="#ffffff", font=("Segoe UI", 10))
+            
+            # Lógica 4 em cima, 3 em baixo
+            r, c = (0, i) if i < 4 else (1, i-4)
+            chk.grid(row=r, column=c, sticky="w", padx=(0, 15), pady=2)
+            self.vars_dias.append(var)
+
+        # Botão Salvar
+        ttk.Button(card, text="💾 SALVAR NOVO MEDICAMENTO", style="Accent.TButton", command=self.cadastrar_remedio).grid(row=10, column=0, columnspan=2, sticky="ew", ipady=5)
+
+    # --- Funções Lógicas (Idênticas às anteriores) ---
     def atualizar_combo_pacientes_cadastro(self):
         pacientes = self.db_cursor.execute("SELECT nome FROM pacientes").fetchall()
         lista = [p[0] for p in pacientes]
@@ -323,33 +451,35 @@ class App:
             except sqlite3.IntegrityError:
                 messagebox.showerror("Erro", "Este paciente já está cadastrado.")
 
-    # --- Lógica de Remédios ---
     def cadastrar_remedio(self):
         paciente_nome = self.combo_paciente_cadastro.get()
         nome_rem = self.entry_nome.get().strip()
         unidade = self.unidade_var.get()
         
         if not paciente_nome:
-            messagebox.showerror("Erro", "Por favor, selecione um paciente para o cadastro.")
+            messagebox.showerror("Erro", "Por favor, selecione um paciente.")
             return
 
         dias_indices = [str(i) for i, var in enumerate(self.vars_dias) if var.get()]
         dias_str = ",".join(dias_indices)
         
         if not dias_indices:
-            messagebox.showerror("Erro", "Selecione ao menos um dia da semana para o uso.")
+            messagebox.showerror("Erro", "Selecione ao menos um dia da semana.")
             return
 
         try:
             doses = int(self.entry_doses.get())
             estoque = int(self.entry_estoque.get())
         except ValueError:
-            messagebox.showerror("Erro", "Dose e Estoque devem ser números inteiros.")
+            messagebox.showerror("Erro", "Dose e Estoque devem ser números.")
             return
 
         if not nome_rem or doses <= 0 or estoque < 0:
             messagebox.showerror("Erro", "Preencha todos os campos corretamente.")
             return
+            
+        if is_str_too_big(nome_rem): return
+        if is_val_too_big((doses, estoque)): return
 
         try:
             self.db_cursor.execute("SELECT id FROM pacientes WHERE nome = ?", (paciente_nome,))
@@ -365,7 +495,10 @@ class App:
             self.entry_nome.delete(0, 'end')
             self.entry_doses.delete(0, 'end')
             self.entry_estoque.delete(0, 'end')
-            messagebox.showinfo("Sucesso", "Medicamento cadastrado com sucesso!")
+            messagebox.showinfo("Sucesso", "Medicamento cadastrado!")
+            
+            # Muda para a aba de dashboard automaticamente
+            self.root.nametowidget(self.root.winfo_children()[1]).select(0) 
             
             filtro_atual = self.combo_filtro.get()
             if filtro_atual != "Todos" and filtro_atual != paciente_nome:
@@ -422,12 +555,18 @@ class App:
             
             dados = self.db_cursor.execute(base_query, params).fetchall()
             
+            count = 0
             for rid, pac_nome, rem_nome, dose, estoque, unid, dias_str in dados:
                 dias_restantes, data_fim = self.calcular_previsao_inteligente(estoque, dose, dias_str)
                 
-                tags_linha = ()
+                tags_linha = []
+                # Lógica Zebra
+                if count % 2 == 1:
+                    tags_linha.append('zebra')
+                count += 1
+                
                 if (dias_restantes <= 5 and estoque > 0) or estoque == 0:
-                    tags_linha = ('critico',)
+                    tags_linha = ['critico'] # Sobrescreve zebra se for crítico
                 
                 display_nome = rem_nome
                 if paciente_filtro == "Todos":
@@ -435,7 +574,7 @@ class App:
                 
                 self.tree.insert("", "end", iid=rid, values=(
                     display_nome, f"{dose} {unid}", f"{estoque} {unid}", f"{dias_restantes} dias", data_fim
-                ), tags=tags_linha)
+                ), tags=tuple(tags_linha))
                 
         except sqlite3.Error as e:
             print(e)
@@ -443,7 +582,7 @@ class App:
     def get_selected_id(self):
         sel = self.tree.focus()
         if not sel:
-            messagebox.showwarning("Atenção", "Por favor, selecione um medicamento na lista primeiro.")
+            messagebox.showwarning("Atenção", "Selecione um medicamento na lista.")
             return None
         return int(sel)
 
@@ -475,19 +614,16 @@ class App:
                 f"Medicamento: {nome_rem}\n"
                 f"Paciente: {nome_pac}\n"
                 f"----------------------------\n"
-                f"Estoque Atual: {estoque} {unid}\n"
-                f"Dose Prescrita: {dose} {unid} (nos dias de uso)\n"
+                f"Estoque: {estoque} {unid}\n"
+                f"Dose: {dose} {unid}\n"
                 f"----------------------------\n"
-                f"Dias de Uso na Semana:\n{dias_formatados}\n"
-                f"----------------------------\n"
-                f"Previsão de Término: {data_fim}\n"
-                f"(Restam {dias_restantes} dias efetivos de medicação)"
+                f"Uso: {dias_formatados}\n"
+                f"Término: {data_fim} ({dias_restantes} dias)"
             )
-            
-            messagebox.showinfo("Detalhes Completos do Medicamento", mensagem)
+            messagebox.showinfo("Detalhes", mensagem)
 
         except sqlite3.Error as e:
-            messagebox.showerror("Erro", f"Erro ao buscar detalhes: {e}")
+            messagebox.showerror("Erro", f"Erro: {e}")
 
     def adicionar_estoque(self):
         rid = self.get_selected_id()
@@ -495,7 +631,7 @@ class App:
         dados = self.db_cursor.execute("SELECT nome, unidade FROM remedios WHERE id=?", (rid,)).fetchone()
         nome, unidade = dados
         
-        qtd_str = simpledialog.askstring("Adicionar Estoque", f"Quantos '{unidade}' você quer adicionar ao estoque de {nome}?")
+        qtd_str = simpledialog.askstring("Adicionar", f"Quantidade a adicionar ({unidade}):")
         if qtd_str:
             try:
                 qtd = int(qtd_str)
@@ -512,7 +648,7 @@ class App:
         dados = self.db_cursor.execute("SELECT nome, unidade FROM remedios WHERE id=?", (rid,)).fetchone()
         nome, unidade = dados
 
-        qtd_str = simpledialog.askstring("Correção Manual", f"Qual é o valor EXATO que está na caixa de {nome} agora?")
+        qtd_str = simpledialog.askstring("Corrigir", f"Novo valor TOTAL ({unidade}):")
         if qtd_str is not None:
             try:
                 qtd = int(qtd_str)
@@ -526,7 +662,7 @@ class App:
     def remover_remedio(self):
         rid = self.get_selected_id()
         if not rid: return
-        if messagebox.askyesno("Confirmar Exclusão", "Tem certeza que deseja apagar este medicamento do sistema?"):
+        if messagebox.askyesno("Confirmar", "Tem certeza que deseja apagar?"):
             self.db_cursor.execute("DELETE FROM remedios WHERE id=?", (rid,))
             self.db_conn.commit()
             self.atualizar_lista_remedios()
@@ -559,8 +695,8 @@ class App:
                     dias_restantes = temp_dias
                 
                 if dias_restantes <= 5:
-                    msg = f"Atenção: {rem_nome} ({pac_nome}) está acabando! Restam {estoque} {unid}."
-                    self.root.after(0, self.agendar_notificacao_main_thread, "PharmaStock - Alerta de Estoque", msg)
+                    msg = f"{rem_nome} ({pac_nome}) está acabando! Restam {estoque} {unid}."
+                    self.root.after(0, self.agendar_notificacao_main_thread, "Alerta PharmaStock", msg)
                     time.sleep(2)
         except Exception:
             pass
@@ -585,15 +721,15 @@ class App:
 
     def testar_notificacao_agora(self):
         if not NOTIFIER_AVAILABLE:
-            messagebox.showinfo("Info", "O sistema de notificações não está disponível neste computador.")
+            messagebox.showinfo("Info", "Sem notificações.")
             return
         threading.Thread(target=self._verificar_estoque_notificacao).start()
-        messagebox.showinfo("PharmaStock", "Verificando estoque e gerando alertas de teste...")
+        messagebox.showinfo("PharmaStock", "Verificando...")
 
     def setup_tray_icon(self):
         try:
             img = Image.open(resource_path("cardiogram.png"))
-            menu = Menu(MenuItem('Abrir PharmaStock', self.mostrar_janela_tray, default=True), MenuItem('Sair', self.sair_app_tray))
+            menu = Menu(MenuItem('Abrir', self.mostrar_janela_tray, default=True), MenuItem('Sair', self.sair_app_tray))
             self.tray_icon = TrayIcon("PharmaStock", img, "PharmaStock", menu)
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
         except Exception:
