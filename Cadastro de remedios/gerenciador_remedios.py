@@ -7,79 +7,47 @@ from datetime import datetime, timedelta, date
 import threading
 import time
 
-# --- Tenta importar bibliotecas externas ---
+# --- Configurações Iniciais ---
 try:
     from win10toast import ToastNotifier
     NOTIFIER_AVAILABLE = True
 except ImportError:
-    print("Biblioteca 'win10toast' não encontrada.")
-    print("O programa funcionará, mas sem notificações.")
-    print("Para instalar, use: pip install win10toast")
     NOTIFIER_AVAILABLE = False
     ToastNotifier = None
 
 try:
     from pystray import Icon as TrayIcon, Menu, MenuItem
-    from PIL import Image, ImageTk # Importa ImageTk para carregar o ícone
+    from PIL import Image, ImageTk
     TRAY_AVAILABLE = True
 except ImportError:
-    print("Bibliotecas 'pystray' ou 'Pillow' não encontradas.")
-    print("O programa funcionará em modo de janela normal.")
-    print("Para instalar, use: pip install pystray pillow")
     TRAY_AVAILABLE = False
-# --- Fim das Importações ---
 
-# --- Configuração de Caminhos ---
-DB_PATH = os.path.join(os.path.expanduser("~"), "remedios.db")
+DB_PATH = os.path.join(os.path.expanduser("~"), "pharmastock.db")
 
 def resource_path(relative_path):
-    """
-    Obtém o caminho absoluto para um recurso (como ícones),
-    funciona tanto em modo de desenvolvimento quanto no executável do PyInstaller.
-    """
     try:
-        # PyInstaller cria uma pasta temporária e armazena o caminho em _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        # Modo de desenvolvimento (não está "congelado")
-        # CORREÇÃO: Usa o diretório do *arquivo .py* e não o diretório de trabalho
         base_path = os.path.dirname(os.path.abspath(__file__))
-
     return os.path.join(base_path, relative_path)
 
-
+# --- Validadores ---
 def is_val_too_big(valores: tuple):
-    """Essa função verifica se o valor é convertível para C INT"""
-    MAX_VALUE = 10_000_000  # limite para evitar overflow
-
-    print(valores)
-    
+    MAX_VALUE = 10_000_000
     for val in valores:
         if val > MAX_VALUE:
-            messagebox.showerror(
-            "Valor inválido",
-            f"Os valores são muito altos. Máximo permitido: {MAX_VALUE}"
-            )
-            
+            messagebox.showerror("Erro", f"Valor muito alto. Máx: {MAX_VALUE}")
             return True
-
     return False
 
 def is_str_too_big(word):
-    MAX_VALUE = 30
+    MAX_VALUE = 50
     if len(word) > MAX_VALUE:
-        messagebox.showerror(
-        "Nome inválido",
-        f"A palavra utilizada é muito grande. O Máximo permitido são {MAX_VALUE} caracteres."
-        )
-        
+        messagebox.showerror("Erro", f"Texto muito grande. Máx: {MAX_VALUE} caracteres.")
         return True
-        
     return False
 
 class App:
-    """Classe principal do aplicativo Gerenciador de Remédios."""
-
     def __init__(self, root):
         self.root = root
         self.db_name = DB_PATH
@@ -89,20 +57,20 @@ class App:
         
         global NOTIFIER_AVAILABLE
         
-        self.root.title("Gerenciador de Remédios")
-        self.root.geometry("800x600")
+        self.root.title("PharmaStock - Gerenciamento Completo")
+        self.root.geometry("1100x750")
 
         if NOTIFIER_AVAILABLE:
             try:
                 self.toaster = ToastNotifier()
-                print("Notificador (win10toast) inicializado com sucesso.")
-            except Exception as e:
-                print(f"Erro ao inicializar o ToastNotifier: {e}")
-                print("Desativando notificações.")
+            except Exception:
                 NOTIFIER_AVAILABLE = False
 
         self._init_db()
         self._setup_ui()
+        
+        self.atualizar_combo_pacientes_cadastro()
+        self.atualizar_combo_filtro()
         self.atualizar_lista_remedios()
 
         self.iniciar_verificador_notificacoes()
@@ -116,55 +84,38 @@ class App:
             self.root.protocol("WM_DELETE_WINDOW", self.sair_app)
             
         if "--minimized" in sys.argv and TRAY_AVAILABLE:
-            print("Iniciando minimizado...")
             self.esconder_janela()
-        else:
-            self.root.deiconify()
-
-    def _check_and_add_column(self, table_name, column_name, column_definition):
-        """Verifica se uma coluna existe e, se não, a adiciona."""
-        try:
-            self.db_cursor.execute(f"PRAGMA table_info({table_name})")
-            columns = [info[1] for info in self.db_cursor.fetchall()]
-            if column_name not in columns:
-                print(f"Adicionando coluna '{column_name}' à tabela '{table_name}'...")
-                self.db_cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
-                self.db_conn.commit()
-                print(f"Coluna '{column_name}' adicionada com sucesso.")
-        except sqlite3.Error as e:
-            print(f"Erro ao tentar adicionar coluna '{column_name}': {e}")
 
     def _init_db(self):
-        """Inicializa a conexão com o banco de dados e cria/atualiza as tabelas."""
         try:
-            print(f"Usando banco de dados em: {self.db_name}")
             self.db_conn = sqlite3.connect(self.db_name)
             self.db_cursor = self.db_conn.cursor()
-            
             self.db_cursor.execute("PRAGMA foreign_keys = ON;")
 
-            # Tabela de Remédios
+            self.db_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pacientes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL UNIQUE
+            )
+            """)
+            
+            self.db_cursor.execute("SELECT count(*) FROM pacientes")
+            if self.db_cursor.fetchone()[0] == 0:
+                self.db_cursor.execute("INSERT INTO pacientes (nome) VALUES ('Principal')")
+
             self.db_cursor.execute("""
             CREATE TABLE IF NOT EXISTS remedios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nome TEXT NOT NULL UNIQUE,
+                nome TEXT NOT NULL,
                 doses_por_dia INTEGER NOT NULL,
-                estoque_atual INTEGER NOT NULL DEFAULT 0
-            )
-            """)
-
-            # Tabela de Histórico de Estoque
-            self.db_cursor.execute("""
-            CREATE TABLE IF NOT EXISTS historico_estoque (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                remedio_id INTEGER NOT NULL,
-                quantidade_adicionada INTEGER NOT NULL,
-                data_adicao DATE NOT NULL,
-                FOREIGN KEY (remedio_id) REFERENCES remedios (id) ON DELETE CASCADE
+                estoque_atual INTEGER NOT NULL DEFAULT 0,
+                unidade TEXT NOT NULL DEFAULT 'comprimido',
+                paciente_id INTEGER,
+                dias_semana TEXT DEFAULT '0,1,2,3,4,5,6',
+                FOREIGN KEY(paciente_id) REFERENCES pacientes(id) ON DELETE CASCADE
             )
             """)
             
-            # Tabela para rastrear a última execução
             self.db_cursor.execute("""
             CREATE TABLE IF NOT EXISTS app_info (
                 id INTEGER PRIMARY KEY,
@@ -172,547 +123,508 @@ class App:
             )
             """)
             
-            # --- NOVO: Adiciona a coluna 'unidade' se ela não existir ---
-            self._check_and_add_column('remedios', 'unidade', 'TEXT NOT NULL DEFAULT "comprimido"')
-            
             self.db_conn.commit()
-            
             self._atualizar_estoque_automatico()
 
         except sqlite3.Error as e:
-            messagebox.showerror("Erro de Banco de Dados", f"Erro ao conectar ao SQLite: {e}")
+            messagebox.showerror("Erro BD", f"Erro fatal: {e}")
             self.root.quit()
 
-    def _atualizar_estoque_automatico(self, dias_passados=None):
-        """Debita o estoque dos remédios com base nos dias que se passaram."""
+    def _atualizar_estoque_automatico(self):
         try:
             hoje = date.today()
-            hoje_str = hoje.strftime('%Y-%m-%d')
-            dias_a_debitar = 0
-            
-            if dias_passados is None:
-                self.db_cursor.execute("SELECT last_run_date FROM app_info WHERE id = 1")
-                resultado = self.db_cursor.fetchone()
-                
-                if resultado:
-                    last_run_date_str = resultado[0]
-                    last_run_date = datetime.strptime(last_run_date_str, '%Y-%m-%d').date()
-                    dias_a_debitar = (hoje - last_run_date).days
-                else:
-                    print("Primeira execução. Configurando data de verificação de estoque.")
-                    self.db_cursor.execute("INSERT INTO app_info (id, last_run_date) VALUES (1, ?)", (hoje_str,))
-                    self.db_conn.commit()
-                    return False
-            else:
-                dias_a_debitar = dias_passados
-
-            
-            if dias_a_debitar > 0:
-                print(f"Detectado {dias_a_debitar} dia(s) para debitar. Atualizando estoque...")
-                
-                self.db_cursor.execute("""
-                    UPDATE remedios
-                    SET estoque_atual = MAX(0, estoque_atual - (doses_por_dia * ?))
-                    WHERE doses_por_dia > 0
-                """, (dias_a_debitar,))
-                
-                self.db_cursor.execute("UPDATE app_info SET last_run_date = ? WHERE id = 1", (hoje_str,))
-                self.db_conn.commit()
-                print(f"Estoque debitado por {dias_a_debitar} dia(s).")
-                
-                return True 
-            else:
-                print("Verificação automática de estoque: Nenhum dia se passou.")
-                return False
-
-        except sqlite3.Error as e:
-            print(f"Erro ao atualizar estoque automático: {e}")
-            messagebox.showwarning("Erro de Atualização", f"Não foi possível atualizar o estoque automático: {e}")
-            return False
-
-    def _verificar_mudanca_dia(self):
-        """Chamado pelo loop 'root.after' para verificar se a data mudou."""
-        try:
             self.db_cursor.execute("SELECT last_run_date FROM app_info WHERE id = 1")
             resultado = self.db_cursor.fetchone()
             
-            if resultado:
-                last_run_date_str = resultado[0]
-                last_run_date = datetime.strptime(last_run_date_str, '%Y-%m-%d').date()
-                hoje = date.today()
+            if not resultado:
+                self.db_cursor.execute("INSERT INTO app_info (id, last_run_date) VALUES (1, ?)", (hoje.strftime('%Y-%m-%d'),))
+                self.db_conn.commit()
+                return False
+
+            last_run = datetime.strptime(resultado[0], '%Y-%m-%d').date()
+            if last_run >= hoje:
+                return False
+
+            remedios = self.db_cursor.execute("SELECT id, doses_por_dia, estoque_atual, dias_semana FROM remedios").fetchall()
+            
+            debitou = False
+            for rem_id, doses, estoque, dias_str in remedios:
+                if estoque <= 0: continue
                 
-                dias_passados = (hoje - last_run_date).days
+                dias_ativos = [int(d) for d in dias_str.split(',') if d]
+                consumo = 0
+                temp_date = last_run + timedelta(days=1)
                 
-                if dias_passados > 0:
-                    print(f"MEIA-NOITE DETECTADA! Passaram {dias_passados} dia(s).")
-                    if self._atualizar_estoque_automatico(dias_passados=dias_passados):
-                        self.atualizar_lista_remedios()
-        
-        except sqlite3.Error as e:
-            print(f"Erro no loop de verificação diária: {e}")
+                while temp_date <= hoje:
+                    if temp_date.weekday() in dias_ativos:
+                        consumo += doses
+                    temp_date += timedelta(days=1)
+                
+                if consumo > 0:
+                    novo = max(0, estoque - consumo)
+                    self.db_cursor.execute("UPDATE remedios SET estoque_atual = ? WHERE id = ?", (novo, rem_id))
+                    debitou = True
+
+            self.db_cursor.execute("UPDATE app_info SET last_run_date = ? WHERE id = 1", (hoje.strftime('%Y-%m-%d'),))
+            self.db_conn.commit()
+            return debitou
         except Exception as e:
-            print(f"Erro inesperado no loop de verificação diária: {e}")
-        finally:
-            self.iniciar_loop_verificacao_diaria() # Re-agenda
+            print(f"Erro update auto: {e}")
+            return False
+
+    def _verificar_mudanca_dia(self):
+        if self._atualizar_estoque_automatico():
+            self.atualizar_lista_remedios()
+        self.iniciar_loop_verificacao_diaria()
 
     def iniciar_loop_verificacao_diaria(self):
-        """Agenda a próxima verificação de mudança de dia."""
-        self.root.after(600000, self._verificar_mudanca_dia) # A cada 10 minutos
+        self.root.after(600000, self._verificar_mudanca_dia)
 
     def _setup_ui(self):
-        """Cria e organiza os widgets da interface gráfica."""
-        
-        # --- Frame de Cadastro ---
-        cadastro_frame = ttk.LabelFrame(self.root, text="Cadastrar Novo Remédio", padding=(10, 10))
-        cadastro_frame.pack(fill="x", padx=10, pady=10)
-        cadastro_frame.columnconfigure(1, weight=1)
+        style = ttk.Style()
+        style.configure("Treeview", rowheight=25)
+        style.configure("Bold.TLabel", font=('Segoe UI', 9, 'bold'))
 
-        # Linha 0: Nome
-        ttk.Label(cadastro_frame, text="Nome:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        # --- Frame de Cadastro (Topo) ---
+        cadastro_frame = ttk.LabelFrame(self.root, text="Cadastrar Novo Medicamento", padding=(10, 10))
+        cadastro_frame.pack(fill="x", padx=10, pady=5)
+
+        # Seleção de Paciente
+        ttk.Label(cadastro_frame, text="Paciente:").grid(row=0, column=0, padx=5, sticky="e")
+        self.combo_paciente_cadastro = ttk.Combobox(cadastro_frame, state="readonly", width=25)
+        self.combo_paciente_cadastro.grid(row=0, column=1, padx=5, sticky="w")
+        
+        btn_novo_pac = ttk.Button(cadastro_frame, text="+ Novo", width=8, command=self.adicionar_paciente_dialog)
+        btn_novo_pac.grid(row=0, column=2, padx=2, sticky="w")
+
+        # Dados do Remédio
+        ttk.Label(cadastro_frame, text="Nome do Medicamento:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
         self.entry_nome = ttk.Entry(cadastro_frame, width=40)
-        self.entry_nome.grid(row=0, column=1, columnspan=3, padx=5, pady=5, sticky="we")
+        self.entry_nome.grid(row=1, column=1, columnspan=2, padx=5, sticky="we")
 
-        # Linha 1: Doses e Estoque
-        ttk.Label(cadastro_frame, text="Dose Diária:").grid(row=1, column=0, padx=5, pady=5, sticky="e")
-        self.entry_doses_dia = ttk.Entry(cadastro_frame, width=10)
-        self.entry_doses_dia.grid(row=1, column=1, padx=5, pady=5, sticky="w")
-
-        ttk.Label(cadastro_frame, text="Estoque Inicial:").grid(row=1, column=2, padx=5, pady=5, sticky="e")
+        ttk.Label(cadastro_frame, text="Dose Diária:").grid(row=2, column=0, padx=5, sticky="e")
+        self.entry_doses = ttk.Entry(cadastro_frame, width=10)
+        self.entry_doses.grid(row=2, column=1, padx=5, sticky="w")
+        
+        ttk.Label(cadastro_frame, text="Estoque Inicial:").grid(row=2, column=1, padx=(120, 5), sticky="w")
         self.entry_estoque = ttk.Entry(cadastro_frame, width=10)
-        self.entry_estoque.grid(row=1, column=3, padx=5, pady=5, sticky="w")
-        
-        # --- NOVO: Linha 2: Unidade ---
-        ttk.Label(cadastro_frame, text="Unidade:").grid(row=2, column=0, padx=5, pady=5, sticky="e")
+        self.entry_estoque.grid(row=2, column=1, padx=(210, 5), sticky="w")
+
+        # Unidade
+        ttk.Label(cadastro_frame, text="Tipo de Unidade:").grid(row=3, column=0, padx=5, sticky="e")
         unidade_frame = ttk.Frame(cadastro_frame)
-        unidade_frame.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky="w")
-        
+        unidade_frame.grid(row=3, column=1, columnspan=3, sticky="w")
         self.unidade_var = tk.StringVar(value="comprimido")
-        ttk.Radiobutton(unidade_frame, text="Comprimido(s)", variable=self.unidade_var, value="comprimido").pack(side="left", padx=5)
-        ttk.Radiobutton(unidade_frame, text="ML", variable=self.unidade_var, value="ml").pack(side="left", padx=5)
+        ttk.Radiobutton(unidade_frame, text="Comprimido", variable=self.unidade_var, value="comprimido").pack(side="left")
+        ttk.Radiobutton(unidade_frame, text="ML", variable=self.unidade_var, value="ml").pack(side="left", padx=10)
+        ttk.Radiobutton(unidade_frame, text="Unidade Genérica", variable=self.unidade_var, value="unidade").pack(side="left", padx=10)
+
+        # Dias da Semana - CORREÇÃO: DIVIDIDO EM 2 LINHAS
+        lbl_dias = ttk.Label(cadastro_frame, text="Dias de Uso:")
+        lbl_dias.grid(row=4, column=0, padx=5, pady=5, sticky="ne")
+        dias_frame = ttk.Frame(cadastro_frame)
+        dias_frame.grid(row=4, column=1, columnspan=4, sticky="w")
         
-        # Botão de Cadastrar
-        self.btn_cadastrar = ttk.Button(cadastro_frame, text="Cadastrar", command=self.cadastrar_remedio)
-        self.btn_cadastrar.grid(row=0, column=4, rowspan=3, padx=10, pady=5, ipady=15) # rowspan=3 agora
+        self.vars_dias = []
+        dias_nomes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+        
+        for i, nome in enumerate(dias_nomes):
+            var = tk.BooleanVar(value=True)
+            chk = ttk.Checkbutton(dias_frame, text=nome, variable=var)
+            
+            # Divide: Primeiros 4 na linha 0, Restantes 3 na linha 1
+            if i < 4:
+                chk.grid(row=0, column=i, padx=5, sticky="w")
+            else:
+                chk.grid(row=1, column=i-4, padx=5, sticky="w")
+                
+            self.vars_dias.append(var)
 
+        self.btn_cadastrar = ttk.Button(cadastro_frame, text="CADASTRAR MEDICAMENTO", command=self.cadastrar_remedio)
+        self.btn_cadastrar.grid(row=0, column=4, rowspan=5, padx=20, sticky="ns")
 
-        # --- Frame da Lista de Remédios ---
-        lista_frame = ttk.LabelFrame(self.root, text="Meus Remédios", padding=(10, 10))
-        lista_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        # --- Frame de Visualização (Centro) ---
+        visualizacao_frame = ttk.LabelFrame(self.root, text="Controle de Estoque e Previsão", padding=(10, 10))
+        visualizacao_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # Colunas atualizadas
-        colunas = ("remedio", "dose", "estoque", "dias_restantes", "data_fim")
-        self.tree = ttk.Treeview(lista_frame, columns=colunas, show="headings")
+        # Filtro
+        filtro_frame = ttk.Frame(visualizacao_frame)
+        filtro_frame.pack(fill="x", pady=(0, 10))
+        
+        ttk.Label(filtro_frame, text="Filtrar visualização por Paciente:", style="Bold.TLabel").pack(side="left", padx=5)
+        self.combo_filtro = ttk.Combobox(filtro_frame, state="readonly", width=30)
+        self.combo_filtro.pack(side="left", padx=5)
+        self.combo_filtro.bind("<<ComboboxSelected>>", self.evento_filtro_mudou)
 
-        self.tree.heading("remedio", text="Remédio")
-        self.tree.heading("dose", text="Dose Diária") # Texto atualizado
-        self.tree.heading("estoque", text="Estoque Atual") # Texto atualizado
-        self.tree.heading("dias_restantes", text="Dias Restantes")
-        self.tree.heading("data_fim", text="Data Prev. Fim")
+        # Treeview
+        colunas = ("remedio", "dose", "estoque", "dias_rest", "previsao")
+        self.tree = ttk.Treeview(visualizacao_frame, columns=colunas, show="headings")
+        
+        self.tree.heading("remedio", text="Nome do Medicamento")
+        self.tree.heading("dose", text="Dose Diária")
+        self.tree.heading("estoque", text="Estoque Atual")
+        self.tree.heading("dias_rest", text="Dias Restantes")
+        self.tree.heading("previsao", text="Previsão de Término")
 
-        self.tree.column("remedio", width=250)
+        self.tree.column("remedio", width=300)
         self.tree.column("dose", width=120, anchor="center")
         self.tree.column("estoque", width=120, anchor="center")
-        self.tree.column("dias_restantes", width=100, anchor="center")
-        self.tree.column("data_fim", width=120, anchor="center")
+        self.tree.column("dias_rest", width=120, anchor="center")
+        self.tree.column("previsao", width=150, anchor="center")
 
-        scrollbar = ttk.Scrollbar(lista_frame, orient="vertical", command=self.tree.yview)
+        self.tree.tag_configure('critico', foreground='red') 
+
+        scrollbar = ttk.Scrollbar(visualizacao_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscroll=scrollbar.set)
-
         scrollbar.pack(side="right", fill="y")
         self.tree.pack(fill="both", expand=True)
 
-        # --- Frame de Ações ---
-        acoes_frame = ttk.Frame(self.root, padding=(10, 0))
+        # --- Frame de Ações (Baixo) ---
+        acoes_frame = ttk.Frame(self.root)
         acoes_frame.pack(fill="x", padx=10, pady=10)
-
-        self.btn_add_estoque = ttk.Button(acoes_frame, text="Adicionar Estoque", command=self.adicionar_estoque)
-        self.btn_add_estoque.pack(side="left", padx=5)
-
-        self.btn_mod_estoque = ttk.Button(acoes_frame, text="Modificar Estoque", command=self.modificar_estoque)
-        self.btn_mod_estoque.pack(side="left", padx=5)
-
-        self.btn_remover = ttk.Button(acoes_frame, text="Remover Remédio", command=self.remover_remedio_selecionado)
-        self.btn_remover.pack(side="left", padx=5)
-
-        self.btn_atualizar = ttk.Button(acoes_frame, text="Atualizar Lista", command=self.atualizar_lista_remedios)
-        self.btn_atualizar.pack(side="left", padx=5)
         
-        self.btn_testar_notif = ttk.Button(acoes_frame, text="Testar Notificação", command=self.testar_notificacao_agora)
-        self.btn_testar_notif.pack(side="right", padx=5)
+        ttk.Button(acoes_frame, text="Adicionar Estoque", command=self.adicionar_estoque).pack(side="left", padx=5)
+        ttk.Button(acoes_frame, text="Corrigir Estoque Manualmente", command=self.modificar_estoque).pack(side="left", padx=5)
+        ttk.Button(acoes_frame, text="Remover Medicamento", command=self.remover_remedio).pack(side="left", padx=5)
+        
+        ttk.Button(acoes_frame, text="Ver Detalhes Completos", command=self.ver_detalhes).pack(side="left", padx=20)
+        
+        ttk.Button(acoes_frame, text="Testar Alerta de Estoque", command=self.testar_notificacao_agora).pack(side="right", padx=5)
 
-    def calcular_previsao(self, estoque, doses_dia):
-        """Calcula os dias restantes e a data de término com base no estoque e uso."""
-        if doses_dia > 0 and estoque > 0:
-            dias_restantes = int(estoque // doses_dia)
-            data_fim = datetime.now() + timedelta(days=dias_restantes)
-            data_fim_str = data_fim.strftime("%d/%m/%Y")
-            dias_str = f"{dias_restantes} dias"
-        elif estoque <= 0:
-            dias_str = "Acabou!"
-            data_fim_str = "N/A"
-        else:
-            dias_str = "N/A"
-            data_fim_str = "N/A"
-        return dias_str, data_fim_str
+    # --- Lógica de Pacientes e Filtros ---
+    def atualizar_combo_pacientes_cadastro(self):
+        pacientes = self.db_cursor.execute("SELECT nome FROM pacientes").fetchall()
+        lista = [p[0] for p in pacientes]
+        self.combo_paciente_cadastro['values'] = lista
+        if lista and not self.combo_paciente_cadastro.get():
+            self.combo_paciente_cadastro.current(0)
 
-    def atualizar_lista_remedios(self):
-        """Busca os dados no banco e atualiza a lista (Treeview)."""
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+    def atualizar_combo_filtro(self):
+        pacientes = self.db_cursor.execute("SELECT nome FROM pacientes").fetchall()
+        lista = ["Todos"] + [p[0] for p in pacientes]
+        self.combo_filtro['values'] = lista
+        if self.combo_filtro.get() == "":
+            self.combo_filtro.current(0)
 
-        try:
-            # --- NOVO: Puxa a 'unidade' do banco ---
-            remedios = self.db_cursor.execute("SELECT id, nome, doses_por_dia, estoque_atual, unidade FROM remedios").fetchall()
-            for r in remedios:
-                remedio_id, nome, doses_dia, estoque, unidade = r
-                dias_str, data_fim_str = self.calcular_previsao(estoque, doses_dia)
-                
-                # Formata a exibição da dose e estoque com a unidade
-                dose_display = f"{doses_dia} {unidade}"
-                estoque_display = f"{estoque} {unidade}"
-                
-                self.tree.insert("", "end", iid=remedio_id, values=(nome, dose_display, estoque_display, dias_str, data_fim_str))
-        except sqlite3.Error as e:
-            messagebox.showerror("Erro de Banco de Dados", f"Erro ao buscar remédios: {e}")
+    def evento_filtro_mudou(self, event):
+        self.atualizar_lista_remedios()
 
+    def adicionar_paciente_dialog(self):
+        nome = simpledialog.askstring("PharmaStock", "Nome do novo paciente:")
+        if nome:
+            if is_str_too_big(nome): return
+            try:
+                self.db_cursor.execute("INSERT INTO pacientes (nome) VALUES (?)", (nome.strip(),))
+                self.db_conn.commit()
+                messagebox.showinfo("Sucesso", "Paciente adicionado com sucesso.")
+                self.atualizar_combo_pacientes_cadastro()
+                self.atualizar_combo_filtro()
+                self.combo_paciente_cadastro.set(nome)
+            except sqlite3.IntegrityError:
+                messagebox.showerror("Erro", "Este paciente já está cadastrado.")
+
+    # --- Lógica de Remédios ---
     def cadastrar_remedio(self):
-        """Valida os campos e insere um novo remédio no banco."""
-        nome = self.entry_nome.get().strip()
-        unidade = self.unidade_var.get() # --- NOVO ---
+        paciente_nome = self.combo_paciente_cadastro.get()
+        nome_rem = self.entry_nome.get().strip()
+        unidade = self.unidade_var.get()
+        
+        if not paciente_nome:
+            messagebox.showerror("Erro", "Por favor, selecione um paciente para o cadastro.")
+            return
+
+        dias_indices = [str(i) for i, var in enumerate(self.vars_dias) if var.get()]
+        dias_str = ",".join(dias_indices)
+        
+        if not dias_indices:
+            messagebox.showerror("Erro", "Selecione ao menos um dia da semana para o uso.")
+            return
+
         try:
-            doses_dia = int(self.entry_doses_dia.get())
+            doses = int(self.entry_doses.get())
             estoque = int(self.entry_estoque.get())
         except ValueError:
-            messagebox.showerror("Erro de Entrada", "Doses por dia e estoque devem ser números inteiros.")
+            messagebox.showerror("Erro", "Dose e Estoque devem ser números inteiros.")
             return
 
-        if not nome or doses_dia <= 0 or estoque < 0:
-            messagebox.showerror("Erro de Entrada", "Todos os campos são obrigatórios. Doses/dia deve ser > 0 e estoque >= 0.")
-            return
-
-        if is_str_too_big(nome):
-            return
-        
-        if is_val_too_big((estoque, doses_dia)):
+        if not nome_rem or doses <= 0 or estoque < 0:
+            messagebox.showerror("Erro", "Preencha todos os campos corretamente.")
             return
 
         try:
-            # --- NOVO: Insere a 'unidade' no banco ---
-            self.db_cursor.execute(
-                "INSERT INTO remedios (nome, doses_por_dia, estoque_atual, unidade) VALUES (?, ?, ?, ?)",
-                (nome, doses_dia, estoque, unidade)
-            )
-            remedio_id = self.db_cursor.lastrowid
+            self.db_cursor.execute("SELECT id FROM pacientes WHERE nome = ?", (paciente_nome,))
+            paciente_id = self.db_cursor.fetchone()[0]
 
-            if estoque > 0:
-                self.db_cursor.execute(
-                    "INSERT INTO historico_estoque (remedio_id, quantidade_adicionada, data_adicao) VALUES (?, ?, ?)",
-                    (remedio_id, estoque, datetime.now())
-                )
+            self.db_cursor.execute("""
+                INSERT INTO remedios (nome, doses_por_dia, estoque_atual, unidade, paciente_id, dias_semana)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (nome_rem, doses, estoque, unidade, paciente_id, dias_str))
             
             self.db_conn.commit()
-            messagebox.showinfo("Sucesso", f"Remédio '{nome}' cadastrado com sucesso.")
             
-            self.entry_nome.delete(0, "end")
-            self.entry_doses_dia.delete(0, "end")
-            self.entry_estoque.delete(0, "end")
-            self.unidade_var.set("comprimido") # Reseta a unidade
+            self.entry_nome.delete(0, 'end')
+            self.entry_doses.delete(0, 'end')
+            self.entry_estoque.delete(0, 'end')
+            messagebox.showinfo("Sucesso", "Medicamento cadastrado com sucesso!")
             
+            filtro_atual = self.combo_filtro.get()
+            if filtro_atual != "Todos" and filtro_atual != paciente_nome:
+                self.combo_filtro.set(paciente_nome)
+                
             self.atualizar_lista_remedios()
-
-        except sqlite3.IntegrityError:
-            messagebox.showerror("Erro", f"O remédio '{nome}' já está cadastrado.")
+            
         except sqlite3.Error as e:
-            messagebox.showerror("Erro de Banco de Dados", f"Erro ao cadastrar: {e}")
+            messagebox.showerror("Erro BD", str(e))
 
-    def get_remedio_id_selecionado(self):
-        """Retorna o ID (do banco) do remédio selecionado na lista."""
-        item_selecionado = self.tree.focus()
-        if not item_selecionado:
-            messagebox.showerror("Nenhuma Seleção", "Por favor, selecione um remédio na lista primeiro.")
+    def calcular_previsao_inteligente(self, estoque, doses_por_dia, dias_str):
+        if estoque <= 0: return 0, "Acabou!"
+        if not dias_str: return 999, "Indefinido"
+        
+        dias_ativos = [int(d) for d in dias_str.split(',') if d]
+        if not dias_ativos: return 999, "Sem dias definidos"
+
+        dias_corridos = 0
+        estoque_temp = estoque
+        data_atual = date.today()
+
+        while estoque_temp > 0 and dias_corridos < 1825: 
+            dia_da_semana = data_atual.weekday()
+            if dia_da_semana in dias_ativos:
+                estoque_temp -= doses_por_dia
+            
+            if estoque_temp > 0:
+                data_atual += timedelta(days=1)
+                dias_corridos += 1
+            else:
+                break 
+
+        return dias_corridos, data_atual.strftime("%d/%m/%Y")
+
+    def atualizar_lista_remedios(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+            
+        paciente_filtro = self.combo_filtro.get()
+        
+        try:
+            base_query = """
+                SELECT r.id, p.nome, r.nome, r.doses_por_dia, r.estoque_atual, r.unidade, r.dias_semana
+                FROM remedios r
+                JOIN pacientes p ON r.paciente_id = p.id
+            """
+            
+            params = ()
+            if paciente_filtro and paciente_filtro != "Todos":
+                base_query += " WHERE p.nome = ?"
+                params = (paciente_filtro,)
+                
+            base_query += " ORDER BY r.nome"
+            
+            dados = self.db_cursor.execute(base_query, params).fetchall()
+            
+            for rid, pac_nome, rem_nome, dose, estoque, unid, dias_str in dados:
+                dias_restantes, data_fim = self.calcular_previsao_inteligente(estoque, dose, dias_str)
+                
+                tags_linha = ()
+                if (dias_restantes <= 5 and estoque > 0) or estoque == 0:
+                    tags_linha = ('critico',)
+                
+                display_nome = rem_nome
+                if paciente_filtro == "Todos":
+                    display_nome = f"{rem_nome} ({pac_nome})"
+                
+                self.tree.insert("", "end", iid=rid, values=(
+                    display_nome, f"{dose} {unid}", f"{estoque} {unid}", f"{dias_restantes} dias", data_fim
+                ), tags=tags_linha)
+                
+        except sqlite3.Error as e:
+            print(e)
+
+    def get_selected_id(self):
+        sel = self.tree.focus()
+        if not sel:
+            messagebox.showwarning("Atenção", "Por favor, selecione um medicamento na lista primeiro.")
             return None
-        return int(item_selecionado)
+        return int(sel)
+
+    def ver_detalhes(self):
+        rid = self.get_selected_id()
+        if not rid: return
+
+        try:
+            query = """
+                SELECT r.nome, p.nome, r.doses_por_dia, r.estoque_atual, r.unidade, r.dias_semana
+                FROM remedios r
+                JOIN pacientes p ON r.paciente_id = p.id
+                WHERE r.id = ?
+            """
+            dados = self.db_cursor.execute(query, (rid,)).fetchone()
+            if not dados: return
+
+            nome_rem, nome_pac, dose, estoque, unid, dias_str = dados
+            dias_restantes, data_fim = self.calcular_previsao_inteligente(estoque, dose, dias_str)
+
+            mapa_dias = {
+                0: "Segunda", 1: "Terça", 2: "Quarta", 3: "Quinta", 
+                4: "Sexta", 5: "Sábado", 6: "Domingo"
+            }
+            dias_ativos = [mapa_dias[int(d)] for d in dias_str.split(',') if d]
+            dias_formatados = ", ".join(dias_ativos) if dias_ativos else "Nenhum dia selecionado"
+
+            mensagem = (
+                f"Medicamento: {nome_rem}\n"
+                f"Paciente: {nome_pac}\n"
+                f"----------------------------\n"
+                f"Estoque Atual: {estoque} {unid}\n"
+                f"Dose Prescrita: {dose} {unid} (nos dias de uso)\n"
+                f"----------------------------\n"
+                f"Dias de Uso na Semana:\n{dias_formatados}\n"
+                f"----------------------------\n"
+                f"Previsão de Término: {data_fim}\n"
+                f"(Restam {dias_restantes} dias efetivos de medicação)"
+            )
+            
+            messagebox.showinfo("Detalhes Completos do Medicamento", mensagem)
+
+        except sqlite3.Error as e:
+            messagebox.showerror("Erro", f"Erro ao buscar detalhes: {e}")
 
     def adicionar_estoque(self):
-        """Adiciona uma nova quantidade ao estoque de um remédio selecionado."""
-        remedio_id = self.get_remedio_id_selecionado()
-        if remedio_id is None:
-            return
-
-        # --- NOVO: Busca a unidade para mostrar no pop-up ---
-        valores = self.tree.item(remedio_id, 'values')
-        nome_remedio = valores[0]
-        estoque_atual_str = valores[2] # Ex: "10 comprimido"
+        rid = self.get_selected_id()
+        if not rid: return
+        dados = self.db_cursor.execute("SELECT nome, unidade FROM remedios WHERE id=?", (rid,)).fetchone()
+        nome, unidade = dados
         
-        try:
-            # Parseia o valor do estoque e a unidade
-            estoque_val, unidade = estoque_atual_str.split()
-            estoque_val = int(estoque_val)
-        except Exception:
-            messagebox.showerror("Erro", "Não foi possível ler o estoque atual do remédio selecionado.")
-            return
-
-        try:
-            prompt = f"Remédio: {nome_remedio}\nEstoque Atual: {estoque_val} {unidade}\n\nQuanto deseja ADICIONAR ({unidade})?"
-            quantidade_str = simpledialog.askstring("Adicionar Estoque", prompt)
-            
-            if quantidade_str is None: return
-            
-            quantidade = int(quantidade_str)
-            if quantidade <= 0:
-                messagebox.showerror("Erro", "A quantidade deve ser um número positivo.")
-                return
-        except (ValueError, TypeError):
-            messagebox.showerror("Erro", "Valor inválido.")
-            return
-
-        try:
-            if is_val_too_big((quantidade, )):
-                return
-            
-            self.db_cursor.execute(
-                "UPDATE remedios SET estoque_atual = estoque_atual + ? WHERE id = ?",
-                (quantidade, remedio_id)
-            )
-            self.db_cursor.execute(
-                "INSERT INTO historico_estoque (remedio_id, quantidade_adicionada, data_adicao) VALUES (?, ?, ?)",
-                (remedio_id, quantidade, datetime.now())
-            )
-            self.db_conn.commit()
-            self.atualizar_lista_remedios()
-        except sqlite3.Error as e:
-            messagebox.showerror("Erro de Banco de Dados", f"Erro ao adicionar estoque: {e}")
+        qtd_str = simpledialog.askstring("Adicionar Estoque", f"Quantos '{unidade}' você quer adicionar ao estoque de {nome}?")
+        if qtd_str:
+            try:
+                qtd = int(qtd_str)
+                if qtd > 0:
+                    self.db_cursor.execute("UPDATE remedios SET estoque_atual = estoque_atual + ? WHERE id=?", (qtd, rid))
+                    self.db_conn.commit()
+                    self.atualizar_lista_remedios()
+            except ValueError:
+                messagebox.showerror("Erro", "Valor inválido.")
 
     def modificar_estoque(self):
-        """Modifica o estoque de um remédio para um valor exato."""
-        remedio_id = self.get_remedio_id_selecionado()
-        if remedio_id is None:
-            return
+        rid = self.get_selected_id()
+        if not rid: return
+        dados = self.db_cursor.execute("SELECT nome, unidade FROM remedios WHERE id=?", (rid,)).fetchone()
+        nome, unidade = dados
 
-        # --- NOVO: Busca a unidade para mostrar no pop-up ---
-        valores = self.tree.item(remedio_id, 'values')
-        estoque_atual_str = valores[2] # Ex: "10 comprimido"
-        try:
-            _, unidade = estoque_atual_str.split()
-        except Exception:
-            unidade = "" # Fallback
+        qtd_str = simpledialog.askstring("Correção Manual", f"Qual é o valor EXATO que está na caixa de {nome} agora?")
+        if qtd_str is not None:
+            try:
+                qtd = int(qtd_str)
+                if qtd >= 0:
+                    self.db_cursor.execute("UPDATE remedios SET estoque_atual = ? WHERE id=?", (qtd, rid))
+                    self.db_conn.commit()
+                    self.atualizar_lista_remedios()
+            except ValueError:
+                 messagebox.showerror("Erro", "Valor inválido.")
 
-        try:
-            prompt = f"Qual o NOVO valor TOTAL do estoque ({unidade})?"
-            quantidade_str = simpledialog.askstring("Modificar Estoque", prompt)
-            
-            if quantidade_str is None: return
-            
-            quantidade = int(quantidade_str)
-            if quantidade < 0:
-                messagebox.showerror("Erro", "O estoque não pode ser negativo.")
-                return
-        except (ValueError, TypeError):
-            messagebox.showerror("Erro", "Valor inválido.")
-            return
-        
-        
-        try:
-            
-            if is_val_too_big((quantidade, )):
-                return
-            
-            self.db_cursor.execute(
-                "UPDATE remedios SET estoque_atual = ? WHERE id = ?",
-                (quantidade, remedio_id)
-            )
+    def remover_remedio(self):
+        rid = self.get_selected_id()
+        if not rid: return
+        if messagebox.askyesno("Confirmar Exclusão", "Tem certeza que deseja apagar este medicamento do sistema?"):
+            self.db_cursor.execute("DELETE FROM remedios WHERE id=?", (rid,))
             self.db_conn.commit()
             self.atualizar_lista_remedios()
-        except sqlite3.Error as e:
-            messagebox.showerror("Erro de Banco de Dados", f"Erro ao modificar estoque: {e}")
-
-    def remover_remedio_selecionado(self):
-        """Remove um remédio selecionado do banco de dados."""
-        remedio_id = self.get_remedio_id_selecionado()
-        if remedio_id is None:
-            return
-
-        nome_remedio = self.tree.item(remedio_id, 'values')[0]
-        
-        if not messagebox.askyesno("Confirmar Remoção", f"Tem certeza que deseja remover '{nome_remedio}'?\n\nTodo o seu histórico de estoque também será apagado."):
-            return
-
-        try:
-            self.db_cursor.execute("DELETE FROM remedios WHERE id = ?", (remedio_id,))
-            self.db_conn.commit()
-            
-            messagebox.showinfo("Sucesso", f"'{nome_remedio}' foi removido.")
-            self.atualizar_lista_remedios()
-            
-        except sqlite3.Error as e:
-            messagebox.showerror("Erro de Banco de Dados", f"Erro ao remover remédio: {e}")
-
-    # --- Lógica de Notificação e Threads ---
 
     def _verificar_estoque_notificacao(self):
-        """Verifica o estoque e agenda notificações na thread principal."""
-        if not NOTIFIER_AVAILABLE:
-            return
-
-        print("Executando verificação de estoque (Notificação)...")
-        
-        conn_thread = None
+        if not NOTIFIER_AVAILABLE: return
+        t_conn = sqlite3.connect(self.db_name)
+        t_cur = t_conn.cursor()
         try:
-            conn_thread = sqlite3.connect(self.db_name)
-            cursor_thread = conn_thread.cursor()
-            
-            # --- NOVO: Puxa a 'unidade' do banco ---
-            remedios = cursor_thread.execute("SELECT nome, doses_por_dia, estoque_atual, unidade FROM remedios").fetchall()
-            
-            LIMITE_DIAS = 5
-            
-            for nome, doses_dia, estoque, unidade in remedios:
-                if doses_dia > 0 and estoque > 0:
-                    dias_restantes = int(estoque // doses_dia)
-                    if dias_restantes <= LIMITE_DIAS:
-                        print(f"Estoque baixo detectado para: {nome}")
-                        
-                        # Pluraliza "comprimido" se necessário
-                        unidade_str = "comprimidos" if unidade == "comprimido" and estoque != 1 else unidade
-                        
-                        titulo = "Alerta de Estoque Baixo!"
-                        mensagem = f"O remédio '{nome}' está acabando. Restam apenas {estoque} {unidade_str} ({dias_restantes} dias)."
-                        
-                        self.root.after(0, self.agendar_notificacao_main_thread, titulo, mensagem)
-                        
-            print("Verificação de notificações concluída.")
-
-        except sqlite3.Error as e:
-            print(f"Erro na thread de notificação (SQLite): {e}")
-        except Exception as e:
-            print(f"Erro inesperado na thread de notificação: {e}")
+            query = """
+                SELECT r.nome, r.estoque_atual, r.unidade, r.doses_por_dia, r.dias_semana, p.nome
+                FROM remedios r
+                JOIN pacientes p ON r.paciente_id = p.id
+                WHERE r.estoque_atual > 0
+            """
+            remedios = t_cur.execute(query).fetchall()
+            for rem_nome, estoque, unid, dose, dias_str, pac_nome in remedios:
+                dias_ativos = [int(d) for d in dias_str.split(',') if d]
+                dias_restantes = 999
+                if dias_ativos:
+                    temp_est = estoque
+                    temp_dias = 0
+                    curr_date = date.today()
+                    while temp_est > 0 and temp_dias < 365:
+                        if curr_date.weekday() in dias_ativos:
+                            temp_est -= dose
+                        if temp_est > 0:
+                            curr_date += timedelta(days=1)
+                            temp_dias += 1
+                    dias_restantes = temp_dias
+                
+                if dias_restantes <= 5:
+                    msg = f"Atenção: {rem_nome} ({pac_nome}) está acabando! Restam {estoque} {unid}."
+                    self.root.after(0, self.agendar_notificacao_main_thread, "PharmaStock - Alerta de Estoque", msg)
+                    time.sleep(2)
+        except Exception:
+            pass
         finally:
-            if conn_thread:
-                conn_thread.close()
-
-    def _loop_notificacao(self):
-        """Loop infinito que roda na thread de fundo."""
-        time.sleep(10)
-        
-        while True:
-            self._verificar_estoque_notificacao()
-            time.sleep(4 * 3600)
-
-    def iniciar_verificador_notificacoes(self):
-        """Inicia a thread de notificação em segundo plano."""
-        if not NOTIFIER_AVAILABLE:
-            print("Notificações desabilitadas. Thread de verificação não iniciada.")
-            return
-            
-        self.notification_thread = threading.Thread(target=self._loop_notificacao)
-        self.notification_thread.daemon = True
-        self.notification_thread.start()
-        print("Thread de notificação iniciada.")
+            t_conn.close()
 
     def agendar_notificacao_main_thread(self, titulo, mensagem):
-        """Função segura para ser chamada pela thread de fundo."""
-        if not (NOTIFIER_AVAILABLE and self.toaster):
-            return
+        if self.toaster:
+            try:
+                self.toaster.show_toast(titulo, mensagem, duration=5, threaded=True)
+            except: pass
 
-        try:
-            icon_path = resource_path("cardiogram.ico")
-            
-            self.toaster.show_toast(
-                title=titulo,
-                msg=mensagem,
-                duration=10,
-                icon_path=icon_path,
-                threaded=True
-            )
-            print(f"Notificação agendada exibida: {titulo}")
-        except Exception as e:
-            print(f"Erro ao tentar MOSTRAR notificação: {e}")
+    def _loop_notificacao(self):
+        time.sleep(5)
+        while True:
+            self._verificar_estoque_notificacao()
+            time.sleep(3600)
+
+    def iniciar_verificador_notificacoes(self):
+        t = threading.Thread(target=self._loop_notificacao, daemon=True)
+        t.start()
 
     def testar_notificacao_agora(self):
-        """Força uma verificação de estoque (para testes)."""
         if not NOTIFIER_AVAILABLE:
-            messagebox.showwarning("Notificações Desabilitadas",
-                                 "A biblioteca 'win10toast' não foi encontrada. As notificações estão desativadas.")
+            messagebox.showinfo("Info", "O sistema de notificações não está disponível neste computador.")
             return
-
-        messagebox.showinfo("Teste de Notificação", 
-                            "Verificação de estoque em segundo plano iniciada.\n\nSe houver remédios com 5 dias ou menos de estoque, você receberá uma notificação em alguns segundos.")
-        
         threading.Thread(target=self._verificar_estoque_notificacao).start()
-
-    # --- Funções do Ícone da Bandeja (System Tray) ---
+        messagebox.showinfo("PharmaStock", "Verificando estoque e gerando alertas de teste...")
 
     def setup_tray_icon(self):
-        """Configura o ícone na bandeja do sistema."""
         try:
-            image_path = resource_path("cardiogram.png")
-            image = Image.open(image_path)
-            
-            menu = Menu(
-                MenuItem('Abrir Gerenciador', self.on_menu_mostrar, default=True),
-                MenuItem('Sair', self.on_menu_sair)
-            )
-            
-            self.tray_icon = TrayIcon("GerenciadorRemedios", image, "Gerenciador de Remédios", menu)
-            
+            img = Image.open(resource_path("cardiogram.png"))
+            menu = Menu(MenuItem('Abrir PharmaStock', self.mostrar_janela_tray, default=True), MenuItem('Sair', self.sair_app_tray))
+            self.tray_icon = TrayIcon("PharmaStock", img, "PharmaStock", menu)
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
-            
-        except Exception as e:
-            print(f"Erro ao criar ícone da bandeja: {e}")
+        except Exception:
             global TRAY_AVAILABLE
             TRAY_AVAILABLE = False
-            self.root.protocol("WM_DELETE_WINDOW", self.sair_app)
 
-    def on_menu_mostrar(self):
-        """Chamado pela thread do pystray para agendar 'mostrar_janela'."""
+    def mostrar_janela_tray(self):
         self.root.after(0, self.mostrar_janela)
 
-    def on_menu_sair(self):
-        """Chamado pela thread do pystray para agendar 'sair_app'."""
+    def sair_app_tray(self):
         self.root.after(0, self.sair_app)
 
     def esconder_janela(self):
-        """Esconde a janela principal (minimiza para a bandeja)."""
         self.root.withdraw()
+        if not TRAY_AVAILABLE:
+            self.root.quit()
 
     def mostrar_janela(self):
-        """Mostra a janela."""
         self.root.deiconify()
         self.root.lift()
-        self.root.focus_force()
 
     def sair_app(self):
-        """Fecha o aplicativo completamente (de forma segura)."""
-        print("Fechando aplicativo...")
-        
-        if self.tray_icon and TRAY_AVAILABLE:
-            self.tray_icon.stop()
-            print("Ícone da bandeja parado.")
-        
-        if self.db_conn:
-            self.db_conn.close()
-            print("Conexão DB fechada.")
-            
-        print("Agendando destruição da janela em 100ms...")
-        self.root.after(100, self.root.destroy)
-
+        if self.tray_icon: self.tray_icon.stop()
+        if self.db_conn: self.db_conn.close()
+        self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
-    
-    icon_image = None
     try:
-        png_path = resource_path("cardiogram.png")
-        pil_image = Image.open(png_path)
-        icon_image = ImageTk.PhotoImage(pil_image)
-        root.iconphoto(True, icon_image)
-    except Exception as e:
-        print(f"Não foi possível carregar o ícone .png da janela: {e}")
-        try:
-            icon_path = resource_path("cardiogram.ico")
-            root.iconbitmap(icon_path)
-        except Exception as e2:
-            print(f"Também falhou ao carregar o .ico: {e2}")
-            
+        icone = ImageTk.PhotoImage(Image.open(resource_path("cardiogram.png")))
+        root.iconphoto(True, icone)
+    except: pass
     app = App(root)
     root.mainloop()
