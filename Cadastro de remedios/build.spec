@@ -1,28 +1,33 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+block_cipher = None
 
 a = Analysis(
-    ['gerenciador_remedios.py'],
+    ['pharmastock.py'],
     pathex=[],
     binaries=[],
     datas=[('cardiogram.png', '.'), ('cardiogram.ico', '.')],
-    hiddenimports=['pystray', 'PIL', 'pkg_resources.py2_warn', 'win32api', 'win32con', 'win32gui'],
+    # ADICIONEI 'pystray.backends.win32' AQUI
+    hiddenimports=['pystray', 'pystray.backends.win32', 'PIL', 'PIL._tkinter_finder'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
     noarchive=False,
-    optimize=0,
 )
-pyz = PYZ(a.pure)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
+    a.zipfiles,
     a.datas,
     [],
-    name='gerenciador_remedios',
+    name='PharmaStock',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
