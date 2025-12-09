@@ -1,2 +1,2 @@
-# Administra-o-de-rem-dios
+# PharmaStock
 É uma iniciativa com o objetivo de facilitar a manutenção e estoque de remédios. Usa python,Tkinter e win10toast.
